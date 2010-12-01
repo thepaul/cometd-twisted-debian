@@ -1,0 +1,26 @@
+From: paul cannon <paul@riptano.com>
+Date: Wed, 1 Dec 2010 13:19:26 -0600
+Subject: [PATCH] fix broken python syntax in unit tests
+
+---
+ cometd/bayeux_unit_test.py |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cometd/bayeux_unit_test.py b/cometd/bayeux_unit_test.py
+index cdc5de9..9ac886f 100644
+--- a/cometd/bayeux_unit_test.py
++++ b/cometd/bayeux_unit_test.py
+@@ -50,10 +50,10 @@ class BayeuxTest(unittest.TestCase):
+ 		''' Fail the client. Recommend that the client authenticate themselves. 
+ 			Pass it back to the client. 
+ 		'''
+-		server_response["successful"] = 
++		server_response["successful"] = \
+ 			{"successful":self.bayeuxServer.json_structure["handshake"]["successful"][1]} # False
+ 		server_response["error"] = [1103,self.bayeuxServer.json_errcodes[1103]]
+-		server_response["advice"] = 
++		server_response["advice"] = \
+ 			{"authenticate":{"authtype": \
+ 				self.bayeuxServer.json_structure["handshake"]["advice"]["authenticate"]["authtype"]}}
+ 
+-- 
