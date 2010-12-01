@@ -8,7 +8,7 @@ Homepage: http://code.google.com/p/cometd/wiki/CometdTwisted
 
 Package: python-cometd-twisted
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, python-twisted-core, python-twisted-web, python-tz, python-cjson | python-simplejson | python (>= 2.6)
+Depends: ${misc:Depends}, ${python:Depends}, python-twisted-core, python-twisted-web, python-tz, python-cjson | python-simplejson | python (>= 2.6), libjs-dojo-core
 Description: Twisted implementation of the cometd HTTP-based event routing bus
  Cometd is a scalable HTTP-based event routing bus that uses a push technology
  pattern known as Comet.
