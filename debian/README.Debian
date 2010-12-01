@@ -1,6 +1,11 @@
 cometd-twisted for Debian
 -------------------------
 
-<possible notes regarding this package - if none, delete this file>
+This package is only meant to provide the cometd-twisted functionality and
+allow you to run a daemon as needed for your case, not try to provide a one-
+size-fits-all initscript and config.
+
+To run it, use twistd as per normal (see twistd(1) for more information) with
+/usr/share/cometd/twisted/cometd.tac.
 
  -- paul cannon <paul@riptano.com>  Wed, 01 Dec 2010 10:29:06 -0600

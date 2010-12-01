@@ -1,5 +1,5 @@
 cometd-twisted (0.1-1) unstable; urgency=low
 
-  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+  * Initial packaging
 
  -- paul cannon <paul@riptano.com>  Wed, 01 Dec 2010 10:29:06 -0600
