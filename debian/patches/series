@@ -6,3 +6,4 @@
 0006-add-bayeux-source-from-cometd-toplevel-repo.patch
 0007-look-for-bayeux-json-in-fs-with-an-absolute-path.patch
 0008-fix-a-myriad-of-syntax-errors-in-bayeux.json.patch
+0009-fix-syntax-error-in-bayeux_error_codes.json-too.patch
