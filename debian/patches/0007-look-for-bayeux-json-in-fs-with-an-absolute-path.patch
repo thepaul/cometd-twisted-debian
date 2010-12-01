@@ -1,0 +1,31 @@
+From: paul cannon <paul@riptano.com>
+Date: Wed, 1 Dec 2010 16:58:19 -0600
+Subject: [PATCH] look for bayeux json in fs, with an absolute path
+
+---
+ cometd/bayeux.py |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/cometd/bayeux.py b/cometd/bayeux.py
+index 5bf96e0..164e53b 100644
+--- a/cometd/bayeux.py
++++ b/cometd/bayeux.py
+@@ -85,7 +85,7 @@ def import_bayeux_structures():
+ 	if BAYEUX_STRUCTURE: 
+ 		return BAYEUX_STRUCTURE,BAYEUX_ERRCODES
+ 
+-	f = open("../bayeux/bayeux.json",'r')
++	f = open("/usr/share/cometd/bayeux/bayeux.json",'r')
+ 	json_dict = re.sub('\/\*.*\*\/','',f.read())
+ 	json_dict = re.sub(' *\n','',json_dict)
+ 	json_dict = re.sub('^ *','',json_dict)
+@@ -93,7 +93,7 @@ def import_bayeux_structures():
+ 	#print json_dict
+ 	BAYEUX_STRUCTURE = json_decode(json_dict)
+ 
+-	f = open("../bayeux/bayeux_error_codes.json",'r')
++	f = open("/usr/share/cometd/bayeux/bayeux_error_codes.json",'r')
+ 	json_dict = re.sub('\/\*.*\*\/','',f.read())
+ 	json_dict = re.sub(' *\n','',json_dict)
+ 	json_dict = re.sub('^ *','',json_dict)
+-- 

@@ -4,3 +4,4 @@
 0004-shebang-line-for-twisted-cometd-client.patch
 0005-fix-broken-python-syntax-in-unit-tests.patch
 0006-add-bayeux-source-from-cometd-toplevel-repo.patch
+0007-look-for-bayeux-json-in-fs-with-an-absolute-path.patch
