@@ -3,3 +3,4 @@
 0003-use-python-s-own-json-module-if-available.patch
 0004-shebang-line-for-twisted-cometd-client.patch
 0005-fix-broken-python-syntax-in-unit-tests.patch
+0006-add-bayeux-source-from-cometd-toplevel-repo.patch
