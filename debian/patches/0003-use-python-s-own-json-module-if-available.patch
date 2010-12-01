@@ -1,0 +1,44 @@
+From: paul cannon <paul@riptano.com>
+Date: Wed, 1 Dec 2010 12:23:48 -0600
+Subject: [PATCH] use python's own json module if available
+
+---
+ cometd/handy.py |   23 +++++++++++++++++------
+ 1 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/cometd/handy.py b/cometd/handy.py
+index 9503f97..148fe2a 100644
+--- a/cometd/handy.py
++++ b/cometd/handy.py
+@@ -22,13 +22,24 @@ try:
+ 		return cjson.decode(some_struct)
+ 
+ 
+-except:
+-	import simplejson
+-	def json_encode(some_struct):
+-		return simplejson.dumps(some_struct)
++except ImportError:
++	try:
++		import json
++		def json_encode(some_struct):
++			return json.dumps(some_struct)
++
++		def json_decode(some_struct):
++			return json.loads(some_struct)
++
++
++	except ImportError:
++		import simplejson
++		def json_encode(some_struct):
++			return simplejson.dumps(some_struct)
++
++		def json_decode(some_struct):
++			return simplejson.loads(some_struct)
+ 
+-	def json_decode(some_struct):
+-		return simplejson.loads(some_struct)
+ 
+ #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ # Global functions
+-- 

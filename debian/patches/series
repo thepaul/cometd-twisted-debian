@@ -1,0 +1,3 @@
+0001-move-cometd-stuff-into-a-python-package.patch
+0002-tac-imports-cometd-from-package.patch
+0003-use-python-s-own-json-module-if-available.patch

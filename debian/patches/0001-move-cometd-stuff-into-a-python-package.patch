@@ -1,0 +1,4924 @@
+From: paul cannon <paul@riptano.com>
+Date: Wed, 1 Dec 2010 11:09:02 -0600
+Subject: [PATCH] move cometd stuff into a python package
+
+---
+ bayeux.py                  |  153 ------------
+ bayeux_client.py           |  188 --------------
+ bayeux_config.py           |   42 ----
+ bayeux_server.py           |  511 --------------------------------------
+ bayeux_unit_test.py        |  214 ----------------
+ comet_js_headers.py        |  172 -------------
+ cometd.py                  |  442 ---------------------------------
+ cometd/bayeux.py           |  153 ++++++++++++
+ cometd/bayeux_client.py    |  188 ++++++++++++++
+ cometd/bayeux_config.py    |   42 ++++
+ cometd/bayeux_server.py    |  511 ++++++++++++++++++++++++++++++++++++++
+ cometd/bayeux_unit_test.py |  214 ++++++++++++++++
+ cometd/comet_js_headers.py |  172 +++++++++++++
+ cometd/cometd.py           |  442 +++++++++++++++++++++++++++++++++
+ cometd/cometd_session.py   |  579 ++++++++++++++++++++++++++++++++++++++++++++
+ cometd/handy.py            |   76 ++++++
+ cometd_session.py          |  579 --------------------------------------------
+ handy.py                   |   76 ------
+ setup.py                   |    2 +-
+ 19 files changed, 2378 insertions(+), 2378 deletions(-)
+ delete mode 100644 bayeux.py
+ delete mode 100644 bayeux_client.py
+ delete mode 100644 bayeux_config.py
+ delete mode 100644 bayeux_server.py
+ delete mode 100644 bayeux_unit_test.py
+ delete mode 100644 comet_js_headers.py
+ delete mode 100644 cometd.py
+ create mode 100644 cometd/__init__.py
+ create mode 100644 cometd/bayeux.py
+ create mode 100644 cometd/bayeux_client.py
+ create mode 100644 cometd/bayeux_config.py
+ create mode 100644 cometd/bayeux_server.py
+ create mode 100644 cometd/bayeux_unit_test.py
+ create mode 100644 cometd/comet_js_headers.py
+ create mode 100644 cometd/cometd.py
+ create mode 100644 cometd/cometd_session.py
+ create mode 100644 cometd/handy.py
+ delete mode 100644 cometd_session.py
+ delete mode 100644 handy.py
+
+diff --git a/bayeux.py b/bayeux.py
+deleted file mode 100644
+index 5bf96e0..0000000
+--- a/bayeux.py
++++ /dev/null
+@@ -1,153 +0,0 @@
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Bayeux protocol supplemental functions.
+-# Note that for test and learning purposes, there are both client and 
+-# server implementations present.
+-#
+-# GloriaJW. 2008_01_04
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-import sys,traceback,string
+-from sets import Set
+-import random,re
+-from crypt import crypt
+-import pdb
+-
+-from handy import *
+-import bayeux_config
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Global variables
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-global BAYEUX_STRUCTURE
+-global BAYEUX_ERRCODES
+-BAYEUX_STRUCTURE = None
+-BAYEUX_ERRCODES = None
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Decorators
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-def json_wrap(func):
+-	def wrapper(*arg):
+-		return json_encode(func(*arg))
+-	return wrapper
+-
+-def json_unwrap(func):
+-	def wrapper(*arg):
+-		'''
+-		This only works when wrapped around class methods. 
+-		It assumes the first parameter is always "self", and ignores it.
+-		'''
+-		try:
+-			return func(arg[0],json_decode(arg[1]))
+-		except:
+-			try:
+-				return func(json_decode(arg[0]))
+-			except:
+-				#pdb.set_trace()
+-				return func(*arg) # not json encoded.
+-
+-	return wrapper
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Global functions
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-#~~~~ jsonp ~~~~~~~~~
+-def jsonp_encode(json_string,jsonp_callback,connection_types):
+-	""" The json_string has to already be json encoded. 
+-		Use the above decorator if necessary. """
+-	return jsonp_callback + "(" + connection_types["envelope"] % (json_string) + ")"
+-
+-def jsonp_decode(jsonp_string):
+-	jf = re.search('^\s*(\w+)\((.*)\)\s*$',jsonp_string)
+-	if not jf:
+-		return None
+-	jsonp_function = jf.group(1)
+-	json_string = jf.group(2)
+-	return (jsonp_function,json_string) # returns a tuple
+-
+-#~~~~ auth ~~~~~~~~~
+-'''
+-NOTE: This only checks crypt() password. 
+-Apache has a proprietary MD5 algorithm, written in C.
+-So for now we're only working with crypt() passwords.
+-See: http://httpd.apache.org/docs/2.2/misc/password_encryptions.html
+-'''
+-def htpasswdAuthenticate(username,password,filename=bayeux_config.htpasswdFile):
+-	lines = [l.rstrip().split(':', 1) for l in file(filename).readlines()]
+-	lines = [l for l in lines if l[0] == username]
+-	if not lines:
+-		return None
+-	hashedPassword = lines[0][1]
+-	return hashedPassword == crypt(password, hashedPassword[:2])
+-
+-#~~~~ main protocol unravel ~~~~~~~~~
+-def import_bayeux_structures(): 
+-	global BAYEUX_STRUCTURE
+-	global BAYEUX_ERRCODES
+-	if BAYEUX_STRUCTURE: 
+-		return BAYEUX_STRUCTURE,BAYEUX_ERRCODES
+-
+-	f = open("../bayeux/bayeux.json",'r')
+-	json_dict = re.sub('\/\*.*\*\/','',f.read())
+-	json_dict = re.sub(' *\n','',json_dict)
+-	json_dict = re.sub('^ *','',json_dict)
+-	f.close()
+-	#print json_dict
+-	BAYEUX_STRUCTURE = json_decode(json_dict)
+-
+-	f = open("../bayeux/bayeux_error_codes.json",'r')
+-	json_dict = re.sub('\/\*.*\*\/','',f.read())
+-	json_dict = re.sub(' *\n','',json_dict)
+-	json_dict = re.sub('^ *','',json_dict)
+-	f.close()
+-	#print json_dict
+-	BAYEUX_ERRCODES = json_decode(json_dict)
+-
+-	'''
+-	Convert keys to integer values.
+-	'''
+-	for key in BAYEUX_ERRCODES.keys():
+-		ikey = int(key)
+-		BAYEUX_ERRCODES[ikey] = BAYEUX_ERRCODES[key]
+-
+-	return BAYEUX_STRUCTURE,BAYEUX_ERRCODES
+-
+-'''
+-Returns 0,1,2 :  0 is equal, 1 is client < server, 2 is client > server.
+-'''
+-def check_version(client_version):
+-	cversion = client_version.split('.')
+-	sversion = bayeux_config.version.split('.')
+-	for i in range(0,len(cversion)):
+-		'''
+-		Check one digit at a time.
+-		'''
+-		for j in range(0,len(cversion)):
+-			try:
+-				if int(cversion[i][j]) > int(sversion[i][j]):
+-					return 2
+-			except IndexError: 
+-				if len(cversion) > len(sversion):
+-					return 2
+-				return 1
+-			try:
+-				if int(cversion[i][j]) < int(sversion[i][j]):
+-					return 1
+-			except IndexError: # If client version id is longer, assume it is greater for now.
+-				if len(cversion) > len(sversion):
+-					return 2
+-				return 1
+-	return 0
+-
+-def generate_random_client_id():
+-	alphanum = string.letters + string.digits
+-
+-	# range goes to len-1 automatically, so this is OK.
+-	# I prefer a random key length, min 10 chars.
+-	keylen = random.randint(10,len(alphanum))
+-
+-	# += string operator is slow, this is preferred.
+-	return ''.join([random.choice(alphanum) for k in xrange(keylen)])
+-
+-if __name__ == "__main__":
+-	print import_bayeux_structures()
+-
+-# vim:ts=4:noet:
+diff --git a/bayeux_client.py b/bayeux_client.py
+deleted file mode 100644
+index 62ea852..0000000
+--- a/bayeux_client.py
++++ /dev/null
+@@ -1,188 +0,0 @@
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Bayeux client protocol interface.
+-# Note that for test and learning purposes, there are both client and 
+-# server implementations present.
+-#
+-# GloriaJW. 2008_01_04
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-from sets import Set
+-import pdb
+-
+-from handy import *
+-from bayeux import *
+-import bayeux_config
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Class definitions
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class BayeuxClient:
+-	def __init__(self):
+-		self.json_structure,self.json_errcodes = import_bayeux_structures()
+-
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def Handshake(self,server_response=None,username=None,password=None):
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-				if server_response["error"][0] in (1102,1103):
+-					""" Server wants a login/passwd, or previous login attempt failed. """
+-					#conntype_set = Set(server_response["supportedConnectionTypes"])
+-					# This is arbitrary.
+-					authtype_set = Set(["htpasswd","OpenId"])
+-
+-					if "htpasswd" in authtype_set:
+-						return {"channel" : self.json_structure["handshake"]["channel"],
+-								"version" : "1.0",
+-								"minimumVersion" : "1.0",
+-								"supportedConnectionTypes" : \
+-								self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
+-								"ext": { "authenticate":{"authtype":"htpasswd",
+-															"user":username,
+-															"password":password
+-														}
+-										}
+-								}
+-					elif "OpenID" in authtype_set:
+-						return {"channel" : self.json_structure["handshake"]["channel"],
+-								"version" : "1.0",
+-								"minimumVersion" : "1.0",
+-								"supportedConnectionTypes" : \
+-								self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
+-								"ext": { "authenticate":{"authtype":"OpenId",
+-															"user":username,
+-															"password":password
+-														}
+-										}
+-								}
+-
+-				else:
+-					return None # unrecognized error
+-					
+-		elif username and password:
+-
+-			# This is arbitrary.
+-			authtype_set = Set(["htpasswd","OpenId"])
+-
+-			if "htpasswd" in authtype_set:
+-				return {"channel" : self.json_structure["handshake"]["channel"],
+-						"version" : "1.0",
+-						"minimumVersion" : "1.0",
+-						"supportedConnectionTypes" : \
+-							self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
+-						"ext": { "authenticate":{"authtype":"htpasswd",
+-													"user":username,
+-													"password":password
+-												}
+-								}
+-						}
+-			elif "OpenID" in authtype_set:
+-				return {"channel" : self.json_structure["handshake"]["channel"],
+-						"version" : "1.0",
+-						"minimumVersion" : "1.0",
+-						"supportedConnectionTypes" : \
+-							self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
+-						"ext": { "authenticate":{"authtype":"OpenId",
+-													"user":username,
+-													"password":password
+-												}
+-								}
+-						}
+-		else:
+-			return {"channel" : self.json_structure["handshake"]["channel"],
+-					"version" : "1.0",
+-					"minimumVersion" : "1.0",
+-					"supportedConnectionTypes" : \
+-						self.json_structure["handshake"]["supportedConnectionTypes"][2:4]
+-					}
+-
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def Connect(self,clientId,connection_type,server_response=None):
+-
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		return {"channel" : self.json_structure["connect"]["channel"],
+-				"clientId" : clientId, # given to us via a successful handshake w/server
+-				"connectionType" : connection_type
+-				}
+-			
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def Publish(self,clientId,channel,data,id=None,guaranteedDelivery=True,server_response=None):
+-
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		return {"channel" : channel,
+-				"clientId" : clientId, # given to us via a successful handshake w/server
+-				"ext" :{"guaranteedDelivery":\
+-					self.json_structure["publish"]["ext"]["guaranteedDelivery"][0]} # true
+-				}
+-			
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def Subscribe(self,clientId,channels,guaranteedDelivery=False,server_response=None):
+-
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		return {"channel" : self.json_structure["subscribe"]["channel"],
+-				"clientId" : clientId, # given to us via a successful handshake w/server
+-				"subscription": channels, # channels is an array
+-				}
+-			
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def Deliver(self,clientId,channel,data,id,guaranteedDelivery=True,server_response=None):
+-
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		return {"channel" : channel,
+-				"clientId" : clientId, # given to us via a successful handshake w/server
+-				"data": data,
+-				"id": id,
+-           		"ext":{"guaranteedDelivery":\
+-					self.json_structure["deliver"]["ext"]["guaranteedDelivery"][0]} # true
+-				}
+-			
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def LocalService(self,clientId,server_response=None):
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		return {"channel" : self.json_structure["lsService"]["channel"],
+-				"clientId" : clientId # given to us via a successful handshake w/server
+-				}
+-			
+-	#~~~~~~~~~~~~~~~~~~~~~~~
+-	@json_wrap
+-	def URLService(self,clientId,server_response=None):
+-		if server_response:
+-			if server_response.has_key("error"):
+-				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
+-					server_response["error"])
+-
+-		'''
+-		"bbc" must be configured in bayeux_config.py, on the server, 
+-		in serviceUrlEndpoints{}, to work. 
+-		'''
+-		return {"channel" : self.json_structure["urlService"]["channel"] + '/' + "bbc",
+-				"clientId" : clientId, # given to us via a successful handshake w/server
+-				}
+-			
+-# vim:ts=4:noet:
+diff --git a/bayeux_config.py b/bayeux_config.py
+deleted file mode 100644
+index e7fdd64..0000000
+--- a/bayeux_config.py
++++ /dev/null
+@@ -1,42 +0,0 @@
+-## Bayeux Configuration Block ##################################################
+-
+-# These timezone strings are standard Olson values, supported in the OS. 
+-# See /usr/share/zoneinfo on Linux based systems for more info.
+-
+-serverTimeZone = "US/Eastern"
+-#serverTimeZone = "US/Pacific"
+-
+-version = "1.01"
+-
+-# If this is True, a subscribe causes an implicit publish.
+-# With an implicit publish, any subscriber can delete the topic/channel,
+-# since there is not explicit owner or topic creation. You have been forewarned!
+-implicitPublish=True
+-
+-# Choices are None, "htpasswd", "OpenId", "Auto" (use all available choices)
+-loginRequired = None
+-
+-htpasswdFile= "./.htpasswd"
+-
+-# This is in milliseconds
+-handshakeTimeout = 10000 
+-
+-# This makes URLs available as service URL endpoints
+-serviceUrlEndpoints={
+-		"bbc":"http://news.bbc.co.uk/",
+-		"ny_times":"http://www.nytimes.com/",	
+-		"cartoon_network":"http://www.cartoonnetwork.com/"
+-	}
+-
+-# When we assume that a long polling client has really lost a connection. 
+-# Inactivity, in minutes.
+-longPollingTimeout = 5
+-
+-# General connection cleanup, idle processing, etc. 
+-# How often to run these tasks, in minutes.
+-cleanupTimer = 2
+-
+-# Testing mode looks elsewhere in the HTTP header for data (to circumvent 
+-# a Twisted bug), and may even change the stream allocation in the future.
+-# This must be on for the bayeux_test_harness code to work.
+-testingMode = True
+diff --git a/bayeux_server.py b/bayeux_server.py
+deleted file mode 100644
+index 71b7f59..0000000
+--- a/bayeux_server.py
++++ /dev/null
+@@ -1,511 +0,0 @@
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Bayeux server protocol handling.
+-# Note that for test and learning purposes, there are both client and 
+-# server implementations present.
+-#
+-# GloriaJW. 2008_01_04
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-import subprocess,urllib2,pprint
+-from sets import Set
+-import pdb
+-
+-from bayeux import *
+-from handy import *
+-import bayeux_config
+-import cometd_session
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Class definitions
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class BayeuxServer:
+-	def __init__(self,comet_clients_state, comet_topics_state):
+-
+-		self.cometClients = comet_clients_state
+-		self.cometTopics = comet_topics_state
+-
+-		self.json_structure, self.json_errcodes = import_bayeux_structures()
+-
+-		self.connectionTypesSet = Set(self.json_structure["handshake"]["supportedConnectionTypes"])
+-
+-		authtype = self.json_structure["handshake"]["advice"]["authenticate"]["authtype"]
+-		self.configAuthTypes = {
+-								"Auto":Set(authtype),
+-								"auto":Set(authtype),
+-								"AUTO":Set(authtype),
+-								"htpasswd":Set(authtype[0]),
+-								"OpenId":Set(authtype[1])
+-								}
+-
+-	#~~~~~~~~~~~~~~~~~~
+-	#@json_unwrap
+-	def ServerInitHandshake(self):
+-		handshake = self.json_structure["handshake"]
+-
+-		GlobalLogger.debug("BayeuxServer: In Self-Init Handshake...",debug=True)
+-
+-		return {"channel" : handshake["channel"],
+-				"version" : handshake["version"],
+-				"minimumVersion" : handshake["minimumVersion"],
+-				"supportedConnectionTypes" : handshake["supportedConnectionTypes"],
+-				"successful" : handshake["successful"][0], # "true"
+-				"authSuccessful" : handshake["authSuccessful"][0], # "true"
+-				"advice" :  {"reconect":handshake["advice"]["reconnect"][0], # "retry"
+-							"authenticate":handshake["advice"]["authenticate"]["authtype"][0] # "htpasswd"
+-					}
+-				}
+-	#~~~~~~~~~~~~~~~~~~
+-   	#@json_unwrap
+-	def Handshake(self, clientHandshake, request = None):
+-		error = None
+-
+-		GlobalLogger.debug("BayeuxServer: In Handshake...",debug=True)
+-		try:
+-			clientConnectionTypesSet = Set([str(t) for t in clientHandshake['supportedConnectionTypes']])
+-		except:
+-			error = [1001,self.json_errcodes[1001] % "(Blank)"]
+-
+-		if not error:
+-			if clientHandshake["channel"] != self.json_structure["handshake"]["channel"]:
+-				error = [801,self.json_errcodes[801] % (clientHandshake["channel"])]
+-	
+-			elif check_version(clientHandshake["version"]) == 2:
+-				'''
+-				Version type checking.
+-				'''
+-				try:
+-					if check_version(clientHandshake["minimumVersion"]) == 2:
+-						error = [901,self.json_errcodes[901] % \
+-							(clientHandshake["minimumVersion"],BAYEUX_VERSION)]
+-				except KeyError:
+-					error = [902,self.json_errcodes[902] % (clientHandshake["version"])]
+-	
+-			elif not clientConnectionTypesSet.intersection(self.connectionTypesSet):
+-				'''
+-				Connection type checking.
+-				'''
+-	
+-				'''
+-				difference = members in client list but not in server list. This should be null,
+-				or the client has an invalid value.
+-				'''
+-				error = [1001,self.json_errcodes[1001] % \
+-					(clientHandshake["supportedConnectionTypes"])]
+-	
+-			'''
+-			Login checking: If required by the config file (loginRequired is not None), 
+-			it's mandatory here. 
+-			'''
+-			if bayeux_config.loginRequired:
+-				try:
+-					authMethods = self.configAuthTypes[bayeux_config.loginRequired]
+-				except (KeyError,IndexError):
+-					error = [601,self.json_errcodes[601] % \
+-						(bayeux_config.loginRequired,
+-						self.json_structure["handshake"]["advice"]["authenticate"]["authtype"])]
+-					authMethods = None
+-	
+-				if not error:
+-					if not clientHandshake.has_key("ext"):
+-						error = [1103,self.json_errcodes[1103]]
+-		
+-					elif not clientHandshake["ext"].has_key("authenticate"):
+-						error = [1103,self.json_errcodes[1103]]
+-		
+-					elif not clientHandshake["ext"]["authenticate"].has_key("authtype"):
+-						error = [1103,self.json_errcodes[1103]]
+-		
+-					elif clientHandshake["ext"]["authenticate"]["authtype"] not in authMethods:
+-						error = [1101,self.json_errcodes[1101] % \
+-							clientHandshake["ext"]["authenticate"]["authtype"]]
+-			else:
+-				authMethods = None
+-	
+-			'''
+-			Try to log in, if appropriate.
+-			'''
+-			authtype = None
+-	
+-			if authMethods and clientHandshake.has_key("ext"):
+-				if clientHandshake["ext"].has_key("authenticate"):
+-					authtype = clientHandshake["ext"]["authenticate"]["authtype"]
+-					username = clientHandshake["ext"]["authenticate"]["user"]
+-					password = clientHandshake["ext"]["authenticate"]["password"]
+-				if authtype not in authMethods:
+-					error = [1101,self.json_errcodes[1101] % authtype]
+-				elif authtype == "htpasswd":
+-					if htpasswdAuthenticate(username,password) != True:
+-						error = [1102,self.json_errcodes[1102]]
+-					else:
+-						GlobalLogger.debug("BayeuxServer: Successful login/password for client.",
+-							debug=True)
+-				elif authtype == "OpenId":
+-					if openIdAuthenticate(username,password) != True:
+-						error = [1102,self.json_errcodes[1102]]
+-					else:
+-						GlobalLogger.debug("BayeuxServer: Successful login/password for client.",
+-							debug=True)
+-	
+-		if error:
+-			return {
+-					"channel" : self.json_structure["handshake"]["channel"],
+-					"version" : clientHandshake["version"],
+-					"successful" : self.json_structure["handshake"]["successful"][1], # "false"
+-					"error" : error,
+-					"supportedConnectionTypes" : \
+-						self.json_structure["handshake"]["supportedConnectionTypes"],
+-					"advice" :  {"reconect": \
+-						self.json_structure["handshake"]["advice"]["reconnect"][1] # "handshake"
+-					}
+-				}
+-
+-		else:
+-			'''
+-			Track handshake clients. A timer starts for them to connect. 
+-			'''
+-			client_id = generate_random_client_id()
+-			self.cometClients.registerHandshake(client_id,authtype)
+-
+-			handshake = self.json_structure["handshake"]
+-
+-			return {
+-					"channel" : handshake["channel"],
+-					"version" : bayeux_config.version,
+-					"supportedConnectionTypes" : self.json_structure["handshake"]["supportedConnectionTypes"],
+-					"clientId" : client_id,
+-					"successful" : handshake["successful"][0], # "true"
+-					"authSuccessful" : handshake["authSuccessful"][0], # "true"
+-					"advice" :  {"reconect":handshake["advice"]["reconnect"][0], # "retry"
+-					"authenticate":handshake["advice"]["authenticate"]["authtype"][0] # "htpasswd"
+-						}
+-					}
+-
+-	#~~~~~~~~~~~~~~~~~~
+-   	#@json_unwrap
+-	def Connect(self,clientConnect,request = None):
+-		error = None
+-		GlobalLogger.debug("BayeuxServer: In Connect...",debug=True)
+-
+-		clientId = clientConnect["clientId"]
+-		if clientConnect["channel"] != self.json_structure["connect"]["channel"]:
+-			error = [1002,self.json_errcodes[1002] % (clientConnect["channel"])]
+-
+-		elif clientConnect["connectionType"] not in self.connectionTypesSet:
+-			error = [1001,self.json_errcodes[1001] % (clientConnect["connectionType"])]
+-
+-		else:
+-			'''
+-			This really returns a clientConnect, but the structs are similar enough
+-			for polymorphism in this particular case.
+-			'''
+-			already_connected = True
+-			clientHandshake = self.cometClients.alreadyConnected(clientId)
+-
+-			'''
+-			If this client was already handshook and connected, this is a request to
+-			reopen the stream. 
+-			'''
+-			if clientHandshake:	
+-				self.cometClients.connectedClients[clientId].reconnect(request)
+-				return clientHandshake.stream
+-			else:	
+-				already_connected = False
+-
+-				if not self.cometClients.checkHandshakeTimers(clientId):
+-					error = [1104,self.json_errcodes[1104] % (clientId)]
+-				else:	
+-					clientHandshake = self.cometClients.removeHandshake(clientId)
+-
+-			if not error:
+-				if not clientHandshake:
+-					error = [1104,self.json_errcodes[1104] % (clientId)]
+-		
+-				elif not already_connected:
+-					timestamp = self.cometClients.registerConnect(clientId,
+-									clientHandshake.auth_type,
+-									clientConnect["connectionType"])
+-				else:
+-					timestamp = clientHandshake.timestamp
+-
+-		if error:
+-			return {"channel" : self.json_structure["connect"]["channel"],
+-					"successful" : self.json_structure["handshake"]["successful"][1], # "false"
+-					"error" : error,
+-					"supportedConnectionTypes" : \
+-						self.json_structure["handshake"]["supportedConnectionTypes"],
+-					"advice" :  {"reconect": \
+-						self.json_structure["handshake"]["advice"]["reconnect"][1] # "handshake"
+-					}
+-				}
+-	
+-		return {
+-				"channel" : self.json_structure["connect"]["channel"],
+-				"clientId" : clientId,
+-				"error" : None,
+-				"authtoken" : None,
+-				"successful" : self.json_structure["connect"]["successful"][0], # "true"
+-				"timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S %Z%z"),
+-				"advice" :  {"reconect":self.json_structure["connect"]["advice"]["reconnect"][0]} # "retry"
+-		}
+-
+-	#~~~~~~~~~~~~~~~~~~
+-   	#@json_unwrap
+-	def Disconnect(self,clientConnect, request = None):
+-
+-		if clientConnect["channel"] != self.json_structure["disconnect"]["channel"]:
+-			error = [1002,self.json_errcodes[1002] % (clientConnect["channel"])]
+-
+-		clientId = clientConnect["clientId"]
+-
+-		clientRef = self.cometClients.alreadyConnected(clientId)
+-
+-		if clientRef:
+-			self.cometClients.disconnect(clientId)
+-			self.cometTopics.removeClient(clientId)
+-			return {
+-					"channel" : self.json_structure["disconnect"]["channel"],
+-					"successful" : self.json_structure["disconnect"]["successful"][0] # "true"
+-				}
+-
+-		return {
+-				"channel" : self.json_structure["disconnect"]["channel"],
+-				"successful" : self.json_structure["disconnect"]["successful"][1] # "false"
+-			}
+-
+-   #~~~~~~~~~~~~~~~~~~~~~~~
+-	#@json_unwrap
+-	def PrepareToDeliver(self, clientDeliver):
+-
+-		topic = self.cometTopics.validateTopic(clientDeliver["channel"],
+-									clientDeliver["clientId"])
+-
+-		if not topic:
+-			error = [1203,self.json_errcodes[1203] % (clientDeliver["clientId"])]
+-			return None
+-		else:
+-			if clientDeliver.has_key("ext") and \
+-				clientDeliver["ext"].has_key("guaranteedDelivery") and \
+-				clientDeliver["ext"]["guaranteedDelivery"] == "true":
+-
+-				guaranteed_delivery = True
+-
+-			else:
+-				guaranteed_delivery = False
+-
+-			messages = self.cometTopics.prepareToDeliver(
+-											clientDeliver["data"],
+-											clientDeliver["clientId"],
+-											clientDeliver["channel"],
+-											guaranteed_delivery)
+-
+-			return messages
+-    #~~~~~~~~~~~~~~~~~~~~~~~
+-	#@json_unwrap
+-	def Publish(self, clientPublish, request = None):
+-		error = None
+-
+-		GlobalLogger.debug("BayeuxServer: In Publish, received: %s" % \
+-			pprint.pformat(clientPublish),debug=True)
+-
+-		if not self.cometClients.validate(clientPublish["clientId"]):
+-			error = [1105,self.json_errcodes[1105] % (clientPublish["clientId"])]
+-
+-		else:
+-			if isinstance(clientPublish["channel"],list):
+-				rList = clientPublish["channel"]
+-			else:
+-				rList = [clientPublish["channel"]]
+-
+-			new_topics = self.cometTopics.registerTopics(rList,clientPublish["clientId"])
+-			if new_topics == []:
+-				error = [1204,self.json_errcodes[1204] % (clientPublish["channel"])]
+-
+-			'''
+-			Assume that all clients who register a topic also want to subscribe to it.
+-			'''
+-			for topic in new_topics:
+-				if not self.cometTopics.subscribeToTopic(topic.channel,clientPublish["clientId"]):
+-					error = [1206,self.json_errcodes[1206] % (clientPublish["channel"])]
+-
+-		if error:
+-			return {	
+-					"channel" : self.json_structure["subscribe"]["channel"],
+-					"clientId" : clientPublish["clientId"], # from handshake w/server
+-					"successful" : self.json_structure["subscribe"]["successful"][1], # "false"
+-					"error" : error
+-			}
+-		return {
+-				"channel" : self.json_structure["subscribe"]["channel"],
+-				"clientId" : clientPublish["clientId"], # from handshake w/server
+-				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
+-		}
+-
+-    #~~~~~~~~~~~~~~~~~~~~~~~
+-	#@json_unwrap
+-	def Subscribe(self, clientSubscribe, request = None):
+-		error = None
+-
+-		GlobalLogger.debug(
+-			"BayeuxServer: In Subscribe, received: %s" \
+-			% pprint.pformat(clientSubscribe),debug=True
+-		)
+-
+-		clientId = clientSubscribe["clientId"]
+-		subscription = clientSubscribe["subscription"]
+-		jsonSub = self.json_structure["subscribe"]
+-		if clientSubscribe["channel"] != jsonSub["channel"]:
+-			error = [1201,self.json_errcodes[1201] % (clientSubscribe["channel"])]
+-
+-		elif not self.cometClients.validate(clientId):
+-			error = [1105,self.json_errcodes[1105] % (clientId)]
+-
+-		if not error:
+-			'''
+-			Implicit topic publish is allowed. If someone subscribes to a nonexistent 
+-			topic, create it, if the config allows this to happen. 
+-			'''
+-
+-			# Subscription could be a string or a list. If string, make it a list.
+-			if isinstance(subscription,basestring):
+-				subscription = [subscription]
+-
+-			for topic in subscription: # This is an array of at least one topic/channel.
+-				if not self.cometTopics.subscribeToTopic(topic,clientId):
+-	
+-					if not bayeux_config.implicitPublish:
+-						error = [1205,self.json_errcodes[1205] % (topic)]
+-						break
+-	
+-					elif not self.cometTopics.registerTopics([topic],clientId,implicit=True):
+-						error = [1204,self.json_errcodes[1204] % (clientSubscribe["channel"])]
+-						break
+-
+-					if not self.cometTopics.subscribeToTopic(topic,clientId):
+-						error = [1206,self.json_errcodes[1206] % (clientSubscribe["channel"])]
+-						break
+-		if error:
+-			return {
+-					"channel" : self.json_structure["subscribe"]["channel"],
+-					"clientId" : clientSubscribe["clientId"], # from handshake w/server
+-					"successful" : self.json_structure["subscribe"]["successful"][1], # "false"
+-					"error" : error
+-					}
+-
+-		clientRef = self.cometClients.alreadyConnected(clientId)
+-		success = "[" + json_encode({
+-				"channel" : self.json_structure["subscribe"]["channel"],
+-				"clientId" : clientSubscribe["clientId"], # from handshake w/server
+-				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
+-		}) + "]"
+-		#if clientRef:
+-		#	clientRef.stream.write(success)
+-		return {
+-				"channel" : self.json_structure["subscribe"]["channel"],
+-				"clientId" : clientSubscribe["clientId"], # from handshake w/server
+-				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
+-		}
+-
+-    #~~~~~~~~~~~~~~~~~~~~~~~
+-	#@json_unwrap
+-	def Unsubscribe(self,clientUnsubscribe, request = None):
+-		error = None
+-
+-		if clientUnsubscribe["channel"] != self.json_structure["unsubscribe"]["channel"]:
+-			error = [1201,self.json_errcodes[1201] % (clientUnsubscribe["channel"])]
+-			
+-		clientId = clientUnsubscribe["clientId"]
+-		
+-		unsubscribe_list = clientUnsubscribe["subscription"]
+-		if isinstance(unsubscribe_list, basestring):
+-			unsubscribe_list = [unsubscribe_list]
+-		
+-		for topic in unsubscribe_list: 
+-			if not self.cometTopics.unsubFromTopic(topic,clientId):
+-				error = [1205,self.json_errcodes[1205] % (topic)]
+-				break
+-
+-		if error:
+-			return {"channel" : self.json_structure["unsubscribe"]["channel"],
+-					"clientId" : clientId, # from handshake w/server
+-					"successful" : self.json_structure["unsubscribe"]["successful"][1], # "false"
+-					"error" : error
+-					}
+-		else:
+-			return {"channel" : self.json_structure["unsubscribe"]["channel"],
+-					"clientId" : clientId, # from handshake w/server
+-					"successful" : self.json_structure["unsubscribe"]["successful"][0] # "true"
+-				}
+-
+-	#~~~~~~~~~~~~~~~~~~
+-   	#@json_unwrap
+-	def Service(self,clientSvcRequest, request = None):
+-		error = None
+-
+-		'''
+-		Make sure they have handshook/connected. 
+-		'''
+-		client_id = clientSvcRequest["clientId"]
+-		if not self.cometClients.validate(client_id):
+-				error = [1105,self.json_errcodes[1105] % (client_id)]
+-		
+-		elif clientSvcRequest["channel"] == self.json_structure["lsService"]["channel"]:
+-			'''
+-			This is a sample system service, which executes "ls -l /tmp" and returns STDOUT.
+-			'''
+-			p = None
+-			try:
+-				p = subprocess.Popen(["ls","-l","/tmp"],stdout=subprocess.PIPE, 
+-					stderr=subprocess.PIPE, close_fds=True)
+-			except:
+-				error = [701,self.json_errcodes[701] % \
+-					(clientSvcRequest["channel"],formatExceptionInfo())]
+-
+-			if p:
+-				stderr = p.stderr.read()
+-				if stderr and stderr != '':
+-					error = [701,self.json_errcodes[701] % (clientSvcRequest["channel"],p.stderr)]
+-				else:
+-					result = p.stdout.read()
+-
+-		elif clientSvcRequest["channel"][:12] == self.json_structure["urlService"]["channel"]:
+-
+-			try:
+-				'''
+-				Get component (some_channel) of /service/url/some_channel
+-				'''
+-				configChannel = clientSvcRequest["channel"].split('/')[3] # 4th member.
+-
+-			except (KeyError,IndexError):
+-				'''
+-				Unrecognized channel.
+-				'''
+-				error = [703,self.json_errcodes[703] % (clientSvcRequest["channel"])]
+-
+-			if not error:
+-				try:
+-					result = urllib2.urlopen(bayeux_config.serviceUrlEndpoints[configChannel]).read()
+-				except IOError, e:
+-					if hasattr(e, 'reason'):
+-						GlobalLogging.error("Service URL failure: %s" % e.reason)
+-						error = [702,self.json_errcodes[702] % (clientSvcRequest["url"],e.reason)]
+-					elif hasattr(e, 'code'):
+-						errorcode = "HTTP error code %d" % e.code
+-						error = [702,self.json_errcodes[702] % (clientSvcRequest["url"],errorcode)]
+-						GlobalLogging.error("%d %s" % (error[0],error[1]))
+-		else:
+-			'''
+-			Unrecognized channel.
+-			'''
+-			error = [703,self.json_errcodes[703] % (clientSvcRequest["channel"])]
+-					
+-		if error:
+-			return {"channel":clientSvcRequest["channel"],
+-					"successful":self.json_structure["urlService"]["successful"][1], # "false"
+-					"error":error
+-				}
+-		else:
+-			return {"channel":clientSvcRequest["channel"],
+-					"successful":self.json_structure["urlService"]["successful"][0], # "true"
+-					"response":result
+-				}
+-
+-# vim:ts=4:noet:
+diff --git a/bayeux_unit_test.py b/bayeux_unit_test.py
+deleted file mode 100644
+index cdc5de9..0000000
+--- a/bayeux_unit_test.py
++++ /dev/null
+@@ -1,214 +0,0 @@
+-import pdb
+-import unittest
+-import pprint
+-
+-from handy import *
+-setGlobalLogger()
+-
+-import bayeux
+-import bayeux_client
+-import bayeux_server
+-import cometd_session
+-
+-class BayeuxTest(unittest.TestCase):
+-	def setUp(self):
+-		self.clientStates = cometd_session.CometClients()
+-		self.clientTopics = cometd_session.CometTopics()
+-		self.bayeuxClient = bayeux_client.BayeuxClient()
+-		self.bayeuxServer = bayeux_server.BayeuxServer(self.clientStates,self.clientTopics)
+-
+-	def tearDown(self):
+-		del self.bayeuxClient
+-		del self.bayeuxServer
+-
+-	def testGoodHandshake(self):
+-		''' (1) Handshake test from client to server '''
+-		result = self.bayeuxServer.Handshake(json_decode(self.bayeuxClient.Handshake()))
+-		pprint.pprint(result)
+-		print "\n\n"
+-
+-	def testBadHandshake(self):
+-		''' (2) Handshake test which fails from client to server: 
+-			Unravel and modify client response. Re-encode and send to server. 
+-		'''
+-		client_handshake_init = json_decode(self.bayeuxClient.Handshake())
+-		client_handshake_init["channel"] = "/some/garbage"
+-		result = self.bayeuxServer.Handshake(client_handshake_init)
+-		print "From testBadHandshake:",result["error"]
+-		pprint.pprint(result)
+-		print "\n\n"
+-
+-	def testPasswdAuthHandshake(self):
+-		''' (3) Handshake which has to authenticate via htpasswd user name and password 
+-			(2 requests)
+-		'''
+-		client_handshake_init = self.bayeuxClient.Handshake()
+-		server_response = self.bayeuxServer.Handshake(json_decode(client_handshake_init))
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-		''' Fail the client. Recommend that the client authenticate themselves. 
+-			Pass it back to the client. 
+-		'''
+-		server_response["successful"] = 
+-			{"successful":self.bayeuxServer.json_structure["handshake"]["successful"][1]} # False
+-		server_response["error"] = [1103,self.bayeuxServer.json_errcodes[1103]]
+-		server_response["advice"] = 
+-			{"authenticate":{"authtype": \
+-				self.bayeuxServer.json_structure["handshake"]["advice"]["authenticate"]["authtype"]}}
+-
+-		print "Server sending back demand for login, failing handshake:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-		''' Client detects error, responds incorrectly, passes it back to the server. '''
+-		nserver_response = self.bayeuxServer.Handshake(json_decode( \
+-			self.bayeuxClient.Handshake(server_response,"gloriajw","5test1234")))
+-
+-		''' Server detects login error '''
+-		print "Intentional wrong password from client: server response:",server_response["error"]
+-		pprint.pprint(nserver_response)
+-		print "\n\n"
+-
+-		''' Client responds correctly this time. '''
+-		server_response = self.bayeuxServer.Handshake(json_decode(self.bayeuxClient.Handshake(None,
+-				"gloriajw","test1234")))
+-
+-		print "Correct login from client:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-		''' Check out server response for errors. '''
+-		if server_response.has_key("error"):
+-			print "Whoops, the client/server http auth failed:",server_response["error"]
+-		else:
+-			print "If you're down here, test (3) should be fine."
+-
+-	def testConnect(self):
+-		''' (4) Test a connect. '''
+-		handshake = self.bayeuxServer.Handshake(json_decode(\
+-			self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
+-		client_connect = self.bayeuxClient.Connect(\
+-			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
+-		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-	def testService(self):
+-		''' (5) Test local service request. '''
+-		handshake = self.bayeuxServer.Handshake(\
+-			json_decode(self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
+-		print "Handshake:"
+-		pprint.pprint(handshake)
+-		print "\n\n"
+-
+-		client_connect = self.bayeuxClient.Connect(\
+-			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
+-		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
+-		print "Connect:"
+-		pprint.pprint(client_connect)
+-		print "\n\n"
+-
+-		result = self.bayeuxServer.Service(json_decode(\
+-			self.bayeuxClient.LocalService(handshake["clientId"])))
+-		print "Local service response:"
+-		pprint.pprint(result)
+-		print "\n\n"
+-
+-		result = self.bayeuxServer.Service(json_decode(\
+-			self.bayeuxClient.URLService(handshake["clientId"])))
+-		print "URL service response:"
+-		pprint.pprint(result)
+-		print "\n\n"
+-
+-	def testPublishSubscribe(self):
+-		''' (6) Test publish and subscribe with per-message guaranteed delivery. '''
+-		handshake = self.bayeuxServer.Handshake(json_decode(\
+-			self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
+-		print "Handshake:"
+-		pprint.pprint(handshake)
+-		print "\n\n"
+-
+-		client_connect = self.bayeuxClient.Connect(\
+-			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
+-		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
+-		print "Connect:"
+-		pprint.pprint(client_connect)
+-		print "\n\n"
+-		print "Server response:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-		handshake2 = self.bayeuxServer.Handshake(json_decode(\
+-			self.bayeuxClient.Handshake(None,"gloriajw2","test12345")))
+-		print "Handshake:"
+-		pprint.pprint(handshake2)
+-		print "\n\n"
+-
+-		client2_connect = self.bayeuxClient.Connect(\
+-			handshake2["clientId"],handshake2["supportedConnectionTypes"][1]) # long_polling
+-		server_response = self.bayeuxServer.Connect(json_decode(client2_connect))
+-		print "Connect:"
+-		pprint.pprint(client2_connect)
+-		print "\n\n"
+-		print "Server response:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-		id=1
+-
+-		client_publish = self.bayeuxClient.Publish(\
+-			handshake["clientId"],"/twelfth/night","No meaningful data for the moment.",id,True)
+-		server_response = self.bayeuxServer.Publish(json_decode(client_publish))
+-		print "Publish:"
+-		pprint.pprint(client_publish)
+-		print "\n\n"
+-		print "Server response:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-
+-		client2_subscribe = self.bayeuxClient.Subscribe(\
+-			handshake2["clientId"],["/twelfth/night"],True)
+-		server_response = self.bayeuxServer.Subscribe(json_decode(client2_subscribe))
+-		print "Subscribe:"
+-		pprint.pprint(client2_subscribe)
+-		print "\n\n"
+-		print "Server response:"
+-		pprint.pprint(server_response)
+-		print "\n\n"
+-			
+-		f=open("../tests/twelfth_night","r")
+-		act1scene1 = f.read()
+-		f.close()
+-
+-		client2_deliver = self.bayeuxClient.Deliver(\
+-			handshake2["clientId"],"/twelfth/night",act1scene1[0:2000],id,True)
+-
+-		'''
+-		There should be 2 outbound messages, one for the sender, as a guaranteed delivery
+-		ACK, the second to the subscriber.
+-		'''
+-		outbound_messages = self.bayeuxServer.PrepareToDeliver(json_decode(client2_deliver))
+-
+-		print "All Outbound messages:"
+-		pprint.pprint(outbound_messages)
+-
+-		client_deliver = json_decode(self.bayeuxClient.Deliver(\
+-			handshake["clientId"],"/twelfth/night",act1scene1[2001:5000],id,True))
+-		[outbound_messages.append(x) for x in self.bayeuxServer.PrepareToDeliver(client_deliver)]
+-
+-		client_deliver = json_decode(self.bayeuxClient.Deliver(\
+-			handshake["clientId"],"/twelfth/night",act1scene1[5001:],id,True))
+-		[outbound_messages.append(x) for x in self.bayeuxServer.PrepareToDeliver(client_deliver)]
+-
+-		print "All Outbound messages:"
+-		pprint.pprint(outbound_messages)
+-
+-def suite():
+-    return unittest.makeSuite(BayeuxTest)
+-
+-if __name__ == '__main__':
+-    # When this module is executed from the command-line, run all its tests
+-    x=suite()
+-    unittest.TextTestRunner().run(x)
+-
+-# vim:ts=4:noet:
+diff --git a/comet_js_headers.py b/comet_js_headers.py
+deleted file mode 100644
+index be09dee..0000000
+--- a/comet_js_headers.py
++++ /dev/null
+@@ -1,172 +0,0 @@
+-#
+-# This needs to be redesigned.
+-#
+-# auto-generated configuration
+-import md5,time
+-
+-tmp = md5.new()
+-tmp.update(str(time.ctime()))
+-mimeBoundary = tmp.hexdigest()
+-errorHttpCode = 406
+-
+-ConnectionTypes = {
+-	"iframe": {
+-		"closeOnDelivery": False,
+-		"preamble":		"""
+-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+-	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+-
+-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+-	<head>
+-		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"></meta>
+-		<title>cometd: The Long Tail of Comet</title>
+-	</head>
+-	<body onload="window.parent.dojox.cometd.tunnelCollapse();">
+-		""",
+-		"envelope":		"""
+-			<br />
+-			<script type="text/javascript">
+-				window.parent.dojox.cometd.deliver(%s);
+-			</script>
+-			<br />
+-		""" + (" " * 2048), # double this if it's not working
+-		"keepalive":	"<br>" + (" " * 2048),
+-		"signoff":		"""
+-		<script type="text/javascript">
+-			window.parent.dojox.cometd.disconnect();
+-		</script>
+-	</body>
+-</html>
+-		""",
+-		# this tunnelInit is borrowed from Dojo
+-		"tunnelInit":	"""
+-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+-	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+-
+-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+-	<head>
+-		<title>cometd: The Long Tail of Comet</title>
+-		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"></meta>
+-		<script type="text/javascript">
+-			// window.parent.console.debug("tunnelInit");
+-			var noInit = false;
+-			var domain = "";
+-			function init(){
+-				var sparams = document.location.search;
+-				if(sparams.length >= 0){
+-					if(sparams.charAt(0) == "?"){
+-						sparams = sparams.substring(1);
+-					}
+-					var ss = (sparams.indexOf("&amp;") >= 0) ? "&amp;" : "&";
+-					sparams = sparams.split(ss);
+-					for(var x=0; x<sparams.length; x++){
+-						var tp = sparams[x].split("=");
+-						if(typeof window[tp[0]] != "undefined"){
+-							window[tp[0]] = ((tp[1]=="true")||(tp[1]=="false")) ? eval(tp[1]) : tp[1];
+-						}
+-					}
+-				}
+-
+-				if(noInit){ return; }
+-				/*
+-				if(domain.length > 0){
+-					document.domain = domain;
+-				}
+-				*/
+-				if(window.parent != window){
+-					//Notify parent that we are loaded.
+-					window.parent.dojox.cometd.tunnelInit(window.location, document.domain);
+-				}
+-			}
+-		</script>
+-	</head>
+-	<body onload="try{ init(); }catch(e){ alert(e); }">
+-		<h4>cometd: The Long Tail of Comet</h4>
+-	</body>
+-</html>""",
+-		"contentType": "text/html"
+-	},
+-
+-	"callback-polling": {
+-		# NOTE: the "callback-polling" method can be used via ScriptSrcIO for
+-		# x-domain polling
+-		"closeOnDelivery": True,
+-		"preamble":		"",
+-		# "envelope":		"cometd.deliver(%s);",
+-		"envelope":		"(%s)",
+-		"keepalive":	" ",
+-		"signoff":		"",
+-		"tunnelInit":	"",
+-		"contentType": "text/javascript"
+-	},
+-
+-	"long-polling": {
+-		"closeOnDelivery": True,
+-		"preamble":		"",
+-		"envelope":		"%s",
+-		"keepalive":	"",
+-		"signoff":		"",
+-		"tunnelInit":	"",
+-		"contentType": "text/plain"
+-	},
+-
+-	"ie-message-block": {
+-		"closeOnDelivery": False,
+-		"preamble":		"""<?xml version="1.0" encoding="UTF-8"?>
+-			<cometd>
+-		""",
+-		"envelope":		"<message><![CDATA[%s]]></message>",
+-		"keepalive":	"<message><![CDATA[]]></message>",
+-		"signoff":		"""
+-			</cometd>
+-		""",
+-		"tunnelInit":	"",
+-		"contentType": "text/xml"
+-	},
+-
+-	"mime-message-block": {
+-		"closeOnDelivery": False,
+-		"preamble":		"--"+mimeBoundary+"\r\n",
+-		"envelope":		"""Content-Type: text/plain\r\n\r\n
+-%s
+-\r\n
+---"""+mimeBoundary+"\r\n",
+-		"signoff":		"\n--"+mimeBoundary+"--\n",
+-		"tunnelInit":	"",
+-		"contentType": "multipart/x-mixed-replace; boundary=%s" % (mimeBoundary,)
+-	},
+-	# failed experiment
+-	#		"preamble":		"",
+-	#		"envelope":		"\n--"+mimeBoundary+"""
+-	#Content-Type: text/plain\n\n
+-	#%s
+-	#
+-	#""",
+-	# --"""+mimeBoundary+"\n",
+-
+-#	"text-stream": {
+-#		"closeOnDelivery": False,
+-#		"preamble":		"--"+mimeBoundary+"\r\n",
+-#		"envelope":		"""\r\n%s\r\n--"""+mimeBoundary+"\r\n"+(1024*" "),
+-#		"signoff":		"\r\n--"+mimeBoundary+"--\r\n",
+-#		"tunnelInit":	"",
+-#		"contentType": "text/plain"
+-#	},
+-
+-#	"flash": {
+-#		"closeOnDelivery": False,
+-#		"preamble":		"",
+-#		"envelope":		"",
+-#		"signoff":		"",
+-#		"tunnelInit":	"",
+-#		"contentType": "text/xml"
+-#	}
+-}
+-
+-# need to specify http-polling for entirely disconnected clients!
+-
+-SupportedConnectionTypes = [
+-	"callback-polling", "long-polling", 
+-	 "mime-message-block", "iframe", 
+-	 # "ie-message-block", # doesn't really work?
+-]
+diff --git a/cometd.py b/cometd.py
+deleted file mode 100644
+index b83a737..0000000
+--- a/cometd.py
++++ /dev/null
+@@ -1,442 +0,0 @@
+-# Copyright (C) The Dojo Foundation 2006-2008
+-# All rights reserved.
+-#
+-# Distributed under the terms of the BSD License
+-#
+-#############################################################################
+-# Handy CometD I/O details:
+-#
+-# (1) There are two layers of communication happening here. 
+-# The first, HTTP layer, is the topmost two-way layer between the client and server.
+-# This layer must ALWAYS either be a 500 or a 200, or the client tries to reconnect wildly. 
+-# Note that the hard coded HTTP header wrapper data is in comet_js_headers.py
+-# 
+-# (2) A handshake is sent to the server first, via HTTP.
+-# No stream (layer 2) is established yet. The connect() request arrives at the server
+-# via HTTP, the stream is established, and layer 2 is up. Once layer 2 is up, 
+-# everything traveling from server to client must be echoed to both layers. 
+-# On the stream layer, raw JSON array is sent. On the HTTP layer, the same JSON array 
+-# is properly wrapped in a 200 (or 500 upon failure) and sent across the HTTP layer 
+-# (simply returned).
+-#
+-# (3) On a long-polling connection the client must repeatedly send connect() messages. 
+-# With long-polling,the stream is closed after each send, and must be reopened.
+-# Upon a connect receipt and stream reopen, all deferred messages are sent at this time. 
+-#
+-# (4) The stream I/O is only one-way, from server to client. All communication 
+-# from client to server is via HTTP. After a connect() is satisfied, all 
+-# communication from server to client is BOTH HTTP and stream, as stated in (2)
+-#
+-# (5) To be clear, # scenes, all of this communication is happening across the 
+-# HTTP socket that opens when a client issues a request 9such as a connect())
+-# to the server. All data is sent in the response, along the same socket. 
+-#############################################################################
+-import twisted
+-import twisted.web2
+-from twisted.web2 import http, resource, channel, stream, server, static, http_headers, responsecode
+-from twisted.python import log
+-from twisted.internet import reactor
+-from twisted.application import service, strports
+-from sets import Set
+-import re
+-import os
+-import md5
+-import time
+-import string
+-import base64
+-import types
+-import weakref
+-import copy
+-
+-import pdb
+-import pprint
+-
+-from handy import *
+-setGlobalLogger(twisted.python.log)  # set this as early as possible.
+-
+-import bayeux_config
+-import bayeux_server
+-import cometd_session
+-import comet_js_headers
+-
+-'''
+-Testing mode reads data from an HTTP request a bit differently, and may also
+-have different stream requirements.
+-'''
+-global TESTING
+-TESTING = bayeux_config.testingMode
+-
+-
+-'''
+-The cleanup timer is a timer for periodic cleanup, such as
+-timeouts of idle connections, etc.
+-'''
+-global CleanupTimer
+-CleanupTimer = rightNowInUTC(bayeux_config.serverTimeZone)
+-
+-"""
+-The cometd modules provides a twisted.web2.resource.Resource endpoint which
+-acts as a generalized multi-endpoint event router that speaks the cometd JSON
+-message format and protocol on the wire.
+-"""
+-
+-'''
+-Bayeux protocol server side handling.
+-
+-CometD session handling, such as making sure handshake preceed connect requests,
+-timing out old unconnected handshakes, etc. 
+-'''
+-global ClientStates,ClientTopics,BayeuxServer
+-CometClients = cometd_session.CometClients()
+-ClientTopics = cometd_session.CometTopics()
+-BayeuxServer = bayeux_server.BayeuxServer(CometClients,ClientTopics)
+-
+-# constants and configuration
+-verbose = True
+-
+-# FIXME: implement advices!
+-# FIXME: need to implement resource constraints
+-
+-def buildResponse(request, data, code=200, type="text/html", headers={}):
+-	jsonpCallbackHdr = ""
+-	jsonpCallbackFtr = ""
+-	if request:
+-		if "jsonp" in request.args:
+-			jsonpCallbackHdr = request.args["jsonp"][0] + "("
+-			jsonpCallbackFtr = ")"
+-
+-	respStream = None
+-	if isinstance(data, stream.ProducerStream):
+-		respStream = data
+-	else:
+-		if not isinstance(data,str):
+-			data = jsonpCallbackHdr \
+-				+ json_encode(data) \
+-				+ jsonpCallbackFtr
+-
+-		respStream = stream.MemoryStream(data)
+-
+-	thead = http_headers.Headers()
+-	thead.addRawHeader("Content-Type", type)
+-	for name in headers:
+-		thead.addRawHeader(name, headers[name])
+-
+-	return http.Response(code, stream=respStream, headers=thead)
+-
+-
+-SupportedFixedTopics = {
+-	"/meta/handshake":		BayeuxServer.Handshake,
+-	"/meta/connect":		BayeuxServer.Connect,
+-	"/meta/disconnect":		BayeuxServer.Disconnect,
+-	"/meta/publish":		BayeuxServer.Publish,
+-	"/meta/subscribe":		BayeuxServer.Subscribe,
+-	"/meta/unsubscribe":	BayeuxServer.Unsubscribe,
+-	"/service/urlService":	BayeuxServer.Service
+-}
+-
+-class cometd(resource.PostableResource):
+-
+-	def __init__(self):
+-		pass
+-
+-	# FIXME: we need to implement client culling. Choices are between keeping a
+-	# list of update times and associated clients, but that requires a
+-	# per-message, per-client update to the state to remove the clients from
+-	# the "below the line" state.
+-
+-	def locateChild(self, request, segments):
+-		# when we're reached, switch immediately to render mode
+-		if verbose:
+-			log.msg(request)
+-			log.msg(segments)
+-		return (self, server.StopTraversal)
+-	
+-	def http_POST(self, request):
+-		# we override the upstream version because it doesn't handle
+-		# JSON mime types
+-		from twisted.web2 import http, fileupload, responsecode, stream
+-		
+-		if request.stream.length == 0:
+-			d = defer.succeed(None)
+-		else:
+-			parser = None
+-			ctype = request.headers.getHeader('content-type')
+-
+-			if ctype is None:
+-				d = defer.succeed(None)
+-			else:
+-				def updateArgs(data):
+-					args = data
+-					request.args.update(args)
+-				
+-				def updateJson(data):
+-					request.args['message'] = [data]
+-				
+-				def error(f):
+-					raise http.HTTPError(responsecode.BAD_REQUEST)
+-				
+-				if ctype.mediaType == 'application' and ctype.mediaSubtype == 'x-www-form-urlencoded':
+-					d = fileupload.parse_urlencoded(request.stream)
+-					d.addCallbacks(updateArgs, error)
+-				elif ctype.mediaType in ('application','text') and ctype.mediaSubtype == 'json':
+-					d = stream.readStream(request.stream, updateJson)
+-					d.addErrback(error)
+-				else:
+-					raise http.HTTPError(responsecode.BAD_REQUEST)
+-		
+-		return d.addCallback(lambda res: self.render(request))
+-	
+-	def render(self, request):
+-		global CleanupTimer
+-
+-		'''
+-		Do some cleanup every N minutes.
+-		'''
+-		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
+-		if (CleanupTimer + datetime.timedelta(minutes=bayeux_config.cleanupTimer) <= rightnow):
+-			'''
+-			This will disconnect clients who are idle for too long (bayeux_config.py)
+-			'''
+-			CometClients.checkActivityTimers()
+-			CleanupTimer = rightnow
+-		
+-		"""
+-		parse the request, dispatching it to the event router as necessaray and
+-		returning errors where appropriate
+-		"""
+-		if verbose: log.msg("----------------------- render -----------------------------")
+-		messages = None
+-		resp = []
+-
+-		# we'll get called as the result of a post or get
+-		if verbose: log.msg(request.args)
+-
+-		# if we get a tunnelInit request in the form of:
+-		# 	http://blah.endpoint.com/cometd/?tunnelInit=iframe&domain=endpoint.com
+-		# just pass back a MemoryStream that has the right junk
+-		if request.args.has_key("tunnelInit") and \
+-			comet_js_handlers.ConnectionTypes.has_key(request.args["tunnelInit"][0]):
+-
+-			resp = comet_js_handlers.ConnectionTypes[request.args["tunnelInit"][0]]["tunnelInit"]
+-			if verbose: log.msg(resp)
+-			return buildResponse(None,resp)
+-
+-		# otherwise if we got a "message" parameter, deserialize it
+-
+-		'''
+-		In Testing mode, the args parameter does not get set 
+-		(this is a documented Twisted
+-		bug, never fixed, happens when data is sent via httplib).
+-		Request data arrives as part of the header, and gets 
+-		transfered to the args parameter here.
+-		'''
+-		if not request.args.has_key("message") and TESTING:
+-			request.args['message'] = []
+-			for i in request.headers._raw_headers["message"]:
+-				request.args['message'].append(i[2:-2])
+-
+-		if request.args.has_key("message"):
+-			try:
+-				# log.msg(request.args["message"][0])
+-				messages = json_decode(request.args["message"][0])
+-			except ValueError:
+-				if verbose: log.msg("message parsing error")
+-				return buildResponse(None,
+-									"message not valid JSON", 
+-									comet_js_headers.errorHttpCode, 
+-									"text/plain")
+-		else:
+-			return buildResponse(None, 
+-								"No message provided. Pass a message parameter to CometD", 
+-								400)
+-
+-		ctr = 0
+-		if verbose: log.msg("messages:", type(messages), ":",  json_encode(messages))
+-		while len(messages):
+-			if verbose: log.msg(len(messages))
+-			m = messages.pop(0)
+-			if not isinstance(m, dict):
+-				continue
+-			"""
+-			if isinstance(m, types.StringTypes):
+-				log.msg(m)
+-				break
+-			if isinstance(m, types.NoneType):
+-				continue
+-			"""
+-			if not m.has_key("channel"):
+-				resp.append({"error":"invalid message passed"})
+-				break
+-				# continue
+-
+-			#pdb.set_trace()
+-			value = None
+-			if SupportedFixedTopics.has_key(m["channel"]):
+-				log.msg("Channel: >>>>%s<<<<" % m["channel"])
+-				value = SupportedFixedTopics[m["channel"]](m,request)
+-				if isinstance(value, dict):
+-					if value.has_key("error"):
+-						if value["error"]:
+-							log.msg("Response is: %s" % pprint.pformat(value))
+-							return buildResponse(request, value, 500, "text/plain")
+-					if m.has_key("clientId"):
+-						if CometClients.connectedClients.has_key(m["clientId"]):
+-							CometClients.connectedClients[m["clientId"]].deliver(value)
+-							CometClients.setActivityTimer(m["clientId"])
+-						else:
+-							value["error"] = 'true'
+-							log.msg("Throwing away message %s for client %s, \
+-								client has disconnected." % (pprint.pformat(value),m["clientId"]))
+-							return buildResponse(request, 
+-								'Message from invalid or disconnected client, ignored', 
+-								500, "text/plain")
+-					resp.append(value)
+-				else:
+-					resp = value
+-					break
+-
+-				log.msg("Response is: %s" % pprint.pformat(resp))
+-
+-			else:
+-				'''
+-				Otherwise we're publishing. Route the message to listeners
+-
+-				If implicit subscribe via publish is allowed, do it.
+-				Only do it for connected clients (handshake/connect).
+-				'''
+-				if CometClients.connectedClients.has_key(m["clientId"]):
+-					log.msg("Routing: %s" % m)
+-					value = BayeuxServer.Publish(m,request)
+-					if value.has_key("error"):
+-						if value["error"]:
+-							log.msg("Response is: %s" % pprint.pformat(value))
+-							return buildResponse(request, value, 500, "text/plain")
+-					# Don't append this value. We fabricated this call.
+-					#resp.append(value)
+-					value = self.route(request, m)
+-					resp.append(value)
+-				else:
+-					log.msg("Throwing away message %s from client %s for other clients, \
+-						originating client has disconnected." % (pprint.pformat(resp),m["clientId"]))
+-					return buildResponse(request, 'Message from invalid client, ignored', 
+-						500, "text/plain")
+-
+-			# FIXME: implement /meta/ping and /meta/status !!
+-			ctr += 1
+-
+-		# FIXME: 
+-		#		need to determine here if/how we should be delivering back on
+-		#		an open connection channel if one was pre-existing
+-		if resp != []:
+-			return buildResponse(request, resp, type="text/plain")
+-
+-	############################################################################
+-	# PROTOCOL METHODS
+-	############################################################################
+-
+-	def initHandshake(self, request, message):
+-		# handle initial auth and create a Connection that subsequent
+-		# /meta/connect messages can talk to
+-
+-		resp = BayeuxServer.Handshake(message)
+-
+-		log.msg("CLIENT MSG:==> %s ==> %s" % (pprint.pformat(request),pprint.pformat(message)))
+-		rstr = [ resp ]
+-		if verbose: log.msg("initHandshake response:", rstr)
+-
+-		return buildResponse(request, rstr, type="text/plain")
+-
+-	def _sanityCheckConnection(self, request, message):
+-		isSane = True
+-		errorResp = None
+-		error = ""
+-
+-		# sanity check the connection request
+-		if not message.has_key("clientId") or \
+-			not CometClients.connectedClients.has_key(message["clientId"]):
+-			isSane = False
+-			error = "invalid clientId provided"
+-			# log.msg(message["clientId"])
+-		elif "connectionType" not in message or \
+-			message["connectionType"] not in SupportedConnectionTypes:
+-			isSane = False
+-			error = "invalid connectionType requested"
+-		if not isSane:
+-			resp = json_encode({ "error": str(error) })
+-			errorResp = buildResponse(request, resp, 500, "text/plain")
+-
+-		return errorResp
+-
+-	def connect(self, request, message):
+-		error =  self._sanityCheckConnection(request, message)
+-		if error:
+-			return error
+-		CometClients.connectedClients[message["clientId"]].reconnect()
+-
+-	def route(self, request, message):
+-		"""
+-		Event routing and delivery. The guts of cometd.
+-		"""
+-		error = self._sanityCheckConnection(request, message)
+-
+-		result = { 
+-			"successful": True,
+-			"channel": message["channel"]
+-		}
+-		if message.has_key("id") and message["id"] is not None:
+-			result["id"] = message["id"]
+-
+-		'''
+-		All possible glob combos for single and double globbing 
+-		are pre-expanded in this dict. 
+-		The key = the match, the value = array of exact match topics.
+-		'''
+-
+-		already_sent = Set([])
+-		message_topic = message["channel"]
+-
+-		'''
+-		Topic patterns aren't stored with trailing slashes.
+-		Make sure the message topic does not have one either. 
+-		'''
+-		if message_topic[-1] == '/':
+-			message_topic = copy.deepcopy(message["channel"])
+-			message_topic = message_topic[0:-1]
+-
+-		'''
+-		Keep track of clients whom have already received this message.
+-		The same clients could be listed in more than one glob match. 
+-		'''
+-		if ClientTopics.quickTopicMatch.activeTopics.has_key(message_topic):
+-			no_match = []
+-			for client_id in ClientTopics.quickTopicMatch.activeTopics[message_topic]:
+-				if (client_id not in already_sent) and (CometClients.connectedClients.has_key(client_id)):
+-					CometClients.connectedClients[client_id].deliver(message)
+-					'''
+-					One problem with this timer: It is reset upon send and receive. 
+-					There is currently no tracking for clients who have only received
+-					but had sent nothing for some period of time. 
+-					'''
+-					CometClients.setActivityTimer(client_id)
+-					already_sent.add(client_id)
+-				else:
+-					no_match.append(client_id)
+-
+-			if no_match != []:
+-				result["successful"] = False
+-				result["error"] = [1401,BayeuxServer.json_errcodes[1401] % (message_topic)]
+-				if verbose: log.msg("Program Error: these client_ids are in the quick Topic match, \
+-					but are not connected: %s, the message was not routed." % \
+-					pprint.pformat(no_match))
+-				
+-			return result
+-
+-		result["successful"] = False
+-		result["error"] = [1301,BayeuxServer.json_errcodes[1301] % (message_topic)]
+-		if verbose: log.msg("No topic:", message_topic, 
+-			"matches for delivery. If implicit subscribe is allowed, it will be done now.")
+-		return result
+-
+-		# FIXME: aggregate ACKs!
+-
+-# vim:ts=4:noet:
+diff --git a/cometd/__init__.py b/cometd/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/cometd/bayeux.py b/cometd/bayeux.py
+new file mode 100644
+index 0000000..5bf96e0
+--- /dev/null
++++ b/cometd/bayeux.py
+@@ -0,0 +1,153 @@
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Bayeux protocol supplemental functions.
++# Note that for test and learning purposes, there are both client and 
++# server implementations present.
++#
++# GloriaJW. 2008_01_04
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++import sys,traceback,string
++from sets import Set
++import random,re
++from crypt import crypt
++import pdb
++
++from handy import *
++import bayeux_config
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Global variables
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++global BAYEUX_STRUCTURE
++global BAYEUX_ERRCODES
++BAYEUX_STRUCTURE = None
++BAYEUX_ERRCODES = None
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Decorators
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++def json_wrap(func):
++	def wrapper(*arg):
++		return json_encode(func(*arg))
++	return wrapper
++
++def json_unwrap(func):
++	def wrapper(*arg):
++		'''
++		This only works when wrapped around class methods. 
++		It assumes the first parameter is always "self", and ignores it.
++		'''
++		try:
++			return func(arg[0],json_decode(arg[1]))
++		except:
++			try:
++				return func(json_decode(arg[0]))
++			except:
++				#pdb.set_trace()
++				return func(*arg) # not json encoded.
++
++	return wrapper
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Global functions
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++#~~~~ jsonp ~~~~~~~~~
++def jsonp_encode(json_string,jsonp_callback,connection_types):
++	""" The json_string has to already be json encoded. 
++		Use the above decorator if necessary. """
++	return jsonp_callback + "(" + connection_types["envelope"] % (json_string) + ")"
++
++def jsonp_decode(jsonp_string):
++	jf = re.search('^\s*(\w+)\((.*)\)\s*$',jsonp_string)
++	if not jf:
++		return None
++	jsonp_function = jf.group(1)
++	json_string = jf.group(2)
++	return (jsonp_function,json_string) # returns a tuple
++
++#~~~~ auth ~~~~~~~~~
++'''
++NOTE: This only checks crypt() password. 
++Apache has a proprietary MD5 algorithm, written in C.
++So for now we're only working with crypt() passwords.
++See: http://httpd.apache.org/docs/2.2/misc/password_encryptions.html
++'''
++def htpasswdAuthenticate(username,password,filename=bayeux_config.htpasswdFile):
++	lines = [l.rstrip().split(':', 1) for l in file(filename).readlines()]
++	lines = [l for l in lines if l[0] == username]
++	if not lines:
++		return None
++	hashedPassword = lines[0][1]
++	return hashedPassword == crypt(password, hashedPassword[:2])
++
++#~~~~ main protocol unravel ~~~~~~~~~
++def import_bayeux_structures(): 
++	global BAYEUX_STRUCTURE
++	global BAYEUX_ERRCODES
++	if BAYEUX_STRUCTURE: 
++		return BAYEUX_STRUCTURE,BAYEUX_ERRCODES
++
++	f = open("../bayeux/bayeux.json",'r')
++	json_dict = re.sub('\/\*.*\*\/','',f.read())
++	json_dict = re.sub(' *\n','',json_dict)
++	json_dict = re.sub('^ *','',json_dict)
++	f.close()
++	#print json_dict
++	BAYEUX_STRUCTURE = json_decode(json_dict)
++
++	f = open("../bayeux/bayeux_error_codes.json",'r')
++	json_dict = re.sub('\/\*.*\*\/','',f.read())
++	json_dict = re.sub(' *\n','',json_dict)
++	json_dict = re.sub('^ *','',json_dict)
++	f.close()
++	#print json_dict
++	BAYEUX_ERRCODES = json_decode(json_dict)
++
++	'''
++	Convert keys to integer values.
++	'''
++	for key in BAYEUX_ERRCODES.keys():
++		ikey = int(key)
++		BAYEUX_ERRCODES[ikey] = BAYEUX_ERRCODES[key]
++
++	return BAYEUX_STRUCTURE,BAYEUX_ERRCODES
++
++'''
++Returns 0,1,2 :  0 is equal, 1 is client < server, 2 is client > server.
++'''
++def check_version(client_version):
++	cversion = client_version.split('.')
++	sversion = bayeux_config.version.split('.')
++	for i in range(0,len(cversion)):
++		'''
++		Check one digit at a time.
++		'''
++		for j in range(0,len(cversion)):
++			try:
++				if int(cversion[i][j]) > int(sversion[i][j]):
++					return 2
++			except IndexError: 
++				if len(cversion) > len(sversion):
++					return 2
++				return 1
++			try:
++				if int(cversion[i][j]) < int(sversion[i][j]):
++					return 1
++			except IndexError: # If client version id is longer, assume it is greater for now.
++				if len(cversion) > len(sversion):
++					return 2
++				return 1
++	return 0
++
++def generate_random_client_id():
++	alphanum = string.letters + string.digits
++
++	# range goes to len-1 automatically, so this is OK.
++	# I prefer a random key length, min 10 chars.
++	keylen = random.randint(10,len(alphanum))
++
++	# += string operator is slow, this is preferred.
++	return ''.join([random.choice(alphanum) for k in xrange(keylen)])
++
++if __name__ == "__main__":
++	print import_bayeux_structures()
++
++# vim:ts=4:noet:
+diff --git a/cometd/bayeux_client.py b/cometd/bayeux_client.py
+new file mode 100644
+index 0000000..62ea852
+--- /dev/null
++++ b/cometd/bayeux_client.py
+@@ -0,0 +1,188 @@
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Bayeux client protocol interface.
++# Note that for test and learning purposes, there are both client and 
++# server implementations present.
++#
++# GloriaJW. 2008_01_04
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++from sets import Set
++import pdb
++
++from handy import *
++from bayeux import *
++import bayeux_config
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Class definitions
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class BayeuxClient:
++	def __init__(self):
++		self.json_structure,self.json_errcodes = import_bayeux_structures()
++
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def Handshake(self,server_response=None,username=None,password=None):
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++				if server_response["error"][0] in (1102,1103):
++					""" Server wants a login/passwd, or previous login attempt failed. """
++					#conntype_set = Set(server_response["supportedConnectionTypes"])
++					# This is arbitrary.
++					authtype_set = Set(["htpasswd","OpenId"])
++
++					if "htpasswd" in authtype_set:
++						return {"channel" : self.json_structure["handshake"]["channel"],
++								"version" : "1.0",
++								"minimumVersion" : "1.0",
++								"supportedConnectionTypes" : \
++								self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
++								"ext": { "authenticate":{"authtype":"htpasswd",
++															"user":username,
++															"password":password
++														}
++										}
++								}
++					elif "OpenID" in authtype_set:
++						return {"channel" : self.json_structure["handshake"]["channel"],
++								"version" : "1.0",
++								"minimumVersion" : "1.0",
++								"supportedConnectionTypes" : \
++								self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
++								"ext": { "authenticate":{"authtype":"OpenId",
++															"user":username,
++															"password":password
++														}
++										}
++								}
++
++				else:
++					return None # unrecognized error
++					
++		elif username and password:
++
++			# This is arbitrary.
++			authtype_set = Set(["htpasswd","OpenId"])
++
++			if "htpasswd" in authtype_set:
++				return {"channel" : self.json_structure["handshake"]["channel"],
++						"version" : "1.0",
++						"minimumVersion" : "1.0",
++						"supportedConnectionTypes" : \
++							self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
++						"ext": { "authenticate":{"authtype":"htpasswd",
++													"user":username,
++													"password":password
++												}
++								}
++						}
++			elif "OpenID" in authtype_set:
++				return {"channel" : self.json_structure["handshake"]["channel"],
++						"version" : "1.0",
++						"minimumVersion" : "1.0",
++						"supportedConnectionTypes" : \
++							self.json_structure["handshake"]["supportedConnectionTypes"][2:4],
++						"ext": { "authenticate":{"authtype":"OpenId",
++													"user":username,
++													"password":password
++												}
++								}
++						}
++		else:
++			return {"channel" : self.json_structure["handshake"]["channel"],
++					"version" : "1.0",
++					"minimumVersion" : "1.0",
++					"supportedConnectionTypes" : \
++						self.json_structure["handshake"]["supportedConnectionTypes"][2:4]
++					}
++
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def Connect(self,clientId,connection_type,server_response=None):
++
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		return {"channel" : self.json_structure["connect"]["channel"],
++				"clientId" : clientId, # given to us via a successful handshake w/server
++				"connectionType" : connection_type
++				}
++			
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def Publish(self,clientId,channel,data,id=None,guaranteedDelivery=True,server_response=None):
++
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		return {"channel" : channel,
++				"clientId" : clientId, # given to us via a successful handshake w/server
++				"ext" :{"guaranteedDelivery":\
++					self.json_structure["publish"]["ext"]["guaranteedDelivery"][0]} # true
++				}
++			
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def Subscribe(self,clientId,channels,guaranteedDelivery=False,server_response=None):
++
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		return {"channel" : self.json_structure["subscribe"]["channel"],
++				"clientId" : clientId, # given to us via a successful handshake w/server
++				"subscription": channels, # channels is an array
++				}
++			
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def Deliver(self,clientId,channel,data,id,guaranteedDelivery=True,server_response=None):
++
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		return {"channel" : channel,
++				"clientId" : clientId, # given to us via a successful handshake w/server
++				"data": data,
++				"id": id,
++           		"ext":{"guaranteedDelivery":\
++					self.json_structure["deliver"]["ext"]["guaranteedDelivery"][0]} # true
++				}
++			
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def LocalService(self,clientId,server_response=None):
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		return {"channel" : self.json_structure["lsService"]["channel"],
++				"clientId" : clientId # given to us via a successful handshake w/server
++				}
++			
++	#~~~~~~~~~~~~~~~~~~~~~~~
++	@json_wrap
++	def URLService(self,clientId,server_response=None):
++		if server_response:
++			if server_response.has_key("error"):
++				GlobalLogger.debug("BayeuxClient: Received response from server: %s" % \
++					server_response["error"])
++
++		'''
++		"bbc" must be configured in bayeux_config.py, on the server, 
++		in serviceUrlEndpoints{}, to work. 
++		'''
++		return {"channel" : self.json_structure["urlService"]["channel"] + '/' + "bbc",
++				"clientId" : clientId, # given to us via a successful handshake w/server
++				}
++			
++# vim:ts=4:noet:
+diff --git a/cometd/bayeux_config.py b/cometd/bayeux_config.py
+new file mode 100644
+index 0000000..e7fdd64
+--- /dev/null
++++ b/cometd/bayeux_config.py
+@@ -0,0 +1,42 @@
++## Bayeux Configuration Block ##################################################
++
++# These timezone strings are standard Olson values, supported in the OS. 
++# See /usr/share/zoneinfo on Linux based systems for more info.
++
++serverTimeZone = "US/Eastern"
++#serverTimeZone = "US/Pacific"
++
++version = "1.01"
++
++# If this is True, a subscribe causes an implicit publish.
++# With an implicit publish, any subscriber can delete the topic/channel,
++# since there is not explicit owner or topic creation. You have been forewarned!
++implicitPublish=True
++
++# Choices are None, "htpasswd", "OpenId", "Auto" (use all available choices)
++loginRequired = None
++
++htpasswdFile= "./.htpasswd"
++
++# This is in milliseconds
++handshakeTimeout = 10000 
++
++# This makes URLs available as service URL endpoints
++serviceUrlEndpoints={
++		"bbc":"http://news.bbc.co.uk/",
++		"ny_times":"http://www.nytimes.com/",	
++		"cartoon_network":"http://www.cartoonnetwork.com/"
++	}
++
++# When we assume that a long polling client has really lost a connection. 
++# Inactivity, in minutes.
++longPollingTimeout = 5
++
++# General connection cleanup, idle processing, etc. 
++# How often to run these tasks, in minutes.
++cleanupTimer = 2
++
++# Testing mode looks elsewhere in the HTTP header for data (to circumvent 
++# a Twisted bug), and may even change the stream allocation in the future.
++# This must be on for the bayeux_test_harness code to work.
++testingMode = True
+diff --git a/cometd/bayeux_server.py b/cometd/bayeux_server.py
+new file mode 100644
+index 0000000..71b7f59
+--- /dev/null
++++ b/cometd/bayeux_server.py
+@@ -0,0 +1,511 @@
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Bayeux server protocol handling.
++# Note that for test and learning purposes, there are both client and 
++# server implementations present.
++#
++# GloriaJW. 2008_01_04
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++import subprocess,urllib2,pprint
++from sets import Set
++import pdb
++
++from bayeux import *
++from handy import *
++import bayeux_config
++import cometd_session
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Class definitions
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class BayeuxServer:
++	def __init__(self,comet_clients_state, comet_topics_state):
++
++		self.cometClients = comet_clients_state
++		self.cometTopics = comet_topics_state
++
++		self.json_structure, self.json_errcodes = import_bayeux_structures()
++
++		self.connectionTypesSet = Set(self.json_structure["handshake"]["supportedConnectionTypes"])
++
++		authtype = self.json_structure["handshake"]["advice"]["authenticate"]["authtype"]
++		self.configAuthTypes = {
++								"Auto":Set(authtype),
++								"auto":Set(authtype),
++								"AUTO":Set(authtype),
++								"htpasswd":Set(authtype[0]),
++								"OpenId":Set(authtype[1])
++								}
++
++	#~~~~~~~~~~~~~~~~~~
++	#@json_unwrap
++	def ServerInitHandshake(self):
++		handshake = self.json_structure["handshake"]
++
++		GlobalLogger.debug("BayeuxServer: In Self-Init Handshake...",debug=True)
++
++		return {"channel" : handshake["channel"],
++				"version" : handshake["version"],
++				"minimumVersion" : handshake["minimumVersion"],
++				"supportedConnectionTypes" : handshake["supportedConnectionTypes"],
++				"successful" : handshake["successful"][0], # "true"
++				"authSuccessful" : handshake["authSuccessful"][0], # "true"
++				"advice" :  {"reconect":handshake["advice"]["reconnect"][0], # "retry"
++							"authenticate":handshake["advice"]["authenticate"]["authtype"][0] # "htpasswd"
++					}
++				}
++	#~~~~~~~~~~~~~~~~~~
++   	#@json_unwrap
++	def Handshake(self, clientHandshake, request = None):
++		error = None
++
++		GlobalLogger.debug("BayeuxServer: In Handshake...",debug=True)
++		try:
++			clientConnectionTypesSet = Set([str(t) for t in clientHandshake['supportedConnectionTypes']])
++		except:
++			error = [1001,self.json_errcodes[1001] % "(Blank)"]
++
++		if not error:
++			if clientHandshake["channel"] != self.json_structure["handshake"]["channel"]:
++				error = [801,self.json_errcodes[801] % (clientHandshake["channel"])]
++	
++			elif check_version(clientHandshake["version"]) == 2:
++				'''
++				Version type checking.
++				'''
++				try:
++					if check_version(clientHandshake["minimumVersion"]) == 2:
++						error = [901,self.json_errcodes[901] % \
++							(clientHandshake["minimumVersion"],BAYEUX_VERSION)]
++				except KeyError:
++					error = [902,self.json_errcodes[902] % (clientHandshake["version"])]
++	
++			elif not clientConnectionTypesSet.intersection(self.connectionTypesSet):
++				'''
++				Connection type checking.
++				'''
++	
++				'''
++				difference = members in client list but not in server list. This should be null,
++				or the client has an invalid value.
++				'''
++				error = [1001,self.json_errcodes[1001] % \
++					(clientHandshake["supportedConnectionTypes"])]
++	
++			'''
++			Login checking: If required by the config file (loginRequired is not None), 
++			it's mandatory here. 
++			'''
++			if bayeux_config.loginRequired:
++				try:
++					authMethods = self.configAuthTypes[bayeux_config.loginRequired]
++				except (KeyError,IndexError):
++					error = [601,self.json_errcodes[601] % \
++						(bayeux_config.loginRequired,
++						self.json_structure["handshake"]["advice"]["authenticate"]["authtype"])]
++					authMethods = None
++	
++				if not error:
++					if not clientHandshake.has_key("ext"):
++						error = [1103,self.json_errcodes[1103]]
++		
++					elif not clientHandshake["ext"].has_key("authenticate"):
++						error = [1103,self.json_errcodes[1103]]
++		
++					elif not clientHandshake["ext"]["authenticate"].has_key("authtype"):
++						error = [1103,self.json_errcodes[1103]]
++		
++					elif clientHandshake["ext"]["authenticate"]["authtype"] not in authMethods:
++						error = [1101,self.json_errcodes[1101] % \
++							clientHandshake["ext"]["authenticate"]["authtype"]]
++			else:
++				authMethods = None
++	
++			'''
++			Try to log in, if appropriate.
++			'''
++			authtype = None
++	
++			if authMethods and clientHandshake.has_key("ext"):
++				if clientHandshake["ext"].has_key("authenticate"):
++					authtype = clientHandshake["ext"]["authenticate"]["authtype"]
++					username = clientHandshake["ext"]["authenticate"]["user"]
++					password = clientHandshake["ext"]["authenticate"]["password"]
++				if authtype not in authMethods:
++					error = [1101,self.json_errcodes[1101] % authtype]
++				elif authtype == "htpasswd":
++					if htpasswdAuthenticate(username,password) != True:
++						error = [1102,self.json_errcodes[1102]]
++					else:
++						GlobalLogger.debug("BayeuxServer: Successful login/password for client.",
++							debug=True)
++				elif authtype == "OpenId":
++					if openIdAuthenticate(username,password) != True:
++						error = [1102,self.json_errcodes[1102]]
++					else:
++						GlobalLogger.debug("BayeuxServer: Successful login/password for client.",
++							debug=True)
++	
++		if error:
++			return {
++					"channel" : self.json_structure["handshake"]["channel"],
++					"version" : clientHandshake["version"],
++					"successful" : self.json_structure["handshake"]["successful"][1], # "false"
++					"error" : error,
++					"supportedConnectionTypes" : \
++						self.json_structure["handshake"]["supportedConnectionTypes"],
++					"advice" :  {"reconect": \
++						self.json_structure["handshake"]["advice"]["reconnect"][1] # "handshake"
++					}
++				}
++
++		else:
++			'''
++			Track handshake clients. A timer starts for them to connect. 
++			'''
++			client_id = generate_random_client_id()
++			self.cometClients.registerHandshake(client_id,authtype)
++
++			handshake = self.json_structure["handshake"]
++
++			return {
++					"channel" : handshake["channel"],
++					"version" : bayeux_config.version,
++					"supportedConnectionTypes" : self.json_structure["handshake"]["supportedConnectionTypes"],
++					"clientId" : client_id,
++					"successful" : handshake["successful"][0], # "true"
++					"authSuccessful" : handshake["authSuccessful"][0], # "true"
++					"advice" :  {"reconect":handshake["advice"]["reconnect"][0], # "retry"
++					"authenticate":handshake["advice"]["authenticate"]["authtype"][0] # "htpasswd"
++						}
++					}
++
++	#~~~~~~~~~~~~~~~~~~
++   	#@json_unwrap
++	def Connect(self,clientConnect,request = None):
++		error = None
++		GlobalLogger.debug("BayeuxServer: In Connect...",debug=True)
++
++		clientId = clientConnect["clientId"]
++		if clientConnect["channel"] != self.json_structure["connect"]["channel"]:
++			error = [1002,self.json_errcodes[1002] % (clientConnect["channel"])]
++
++		elif clientConnect["connectionType"] not in self.connectionTypesSet:
++			error = [1001,self.json_errcodes[1001] % (clientConnect["connectionType"])]
++
++		else:
++			'''
++			This really returns a clientConnect, but the structs are similar enough
++			for polymorphism in this particular case.
++			'''
++			already_connected = True
++			clientHandshake = self.cometClients.alreadyConnected(clientId)
++
++			'''
++			If this client was already handshook and connected, this is a request to
++			reopen the stream. 
++			'''
++			if clientHandshake:	
++				self.cometClients.connectedClients[clientId].reconnect(request)
++				return clientHandshake.stream
++			else:	
++				already_connected = False
++
++				if not self.cometClients.checkHandshakeTimers(clientId):
++					error = [1104,self.json_errcodes[1104] % (clientId)]
++				else:	
++					clientHandshake = self.cometClients.removeHandshake(clientId)
++
++			if not error:
++				if not clientHandshake:
++					error = [1104,self.json_errcodes[1104] % (clientId)]
++		
++				elif not already_connected:
++					timestamp = self.cometClients.registerConnect(clientId,
++									clientHandshake.auth_type,
++									clientConnect["connectionType"])
++				else:
++					timestamp = clientHandshake.timestamp
++
++		if error:
++			return {"channel" : self.json_structure["connect"]["channel"],
++					"successful" : self.json_structure["handshake"]["successful"][1], # "false"
++					"error" : error,
++					"supportedConnectionTypes" : \
++						self.json_structure["handshake"]["supportedConnectionTypes"],
++					"advice" :  {"reconect": \
++						self.json_structure["handshake"]["advice"]["reconnect"][1] # "handshake"
++					}
++				}
++	
++		return {
++				"channel" : self.json_structure["connect"]["channel"],
++				"clientId" : clientId,
++				"error" : None,
++				"authtoken" : None,
++				"successful" : self.json_structure["connect"]["successful"][0], # "true"
++				"timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%S %Z%z"),
++				"advice" :  {"reconect":self.json_structure["connect"]["advice"]["reconnect"][0]} # "retry"
++		}
++
++	#~~~~~~~~~~~~~~~~~~
++   	#@json_unwrap
++	def Disconnect(self,clientConnect, request = None):
++
++		if clientConnect["channel"] != self.json_structure["disconnect"]["channel"]:
++			error = [1002,self.json_errcodes[1002] % (clientConnect["channel"])]
++
++		clientId = clientConnect["clientId"]
++
++		clientRef = self.cometClients.alreadyConnected(clientId)
++
++		if clientRef:
++			self.cometClients.disconnect(clientId)
++			self.cometTopics.removeClient(clientId)
++			return {
++					"channel" : self.json_structure["disconnect"]["channel"],
++					"successful" : self.json_structure["disconnect"]["successful"][0] # "true"
++				}
++
++		return {
++				"channel" : self.json_structure["disconnect"]["channel"],
++				"successful" : self.json_structure["disconnect"]["successful"][1] # "false"
++			}
++
++   #~~~~~~~~~~~~~~~~~~~~~~~
++	#@json_unwrap
++	def PrepareToDeliver(self, clientDeliver):
++
++		topic = self.cometTopics.validateTopic(clientDeliver["channel"],
++									clientDeliver["clientId"])
++
++		if not topic:
++			error = [1203,self.json_errcodes[1203] % (clientDeliver["clientId"])]
++			return None
++		else:
++			if clientDeliver.has_key("ext") and \
++				clientDeliver["ext"].has_key("guaranteedDelivery") and \
++				clientDeliver["ext"]["guaranteedDelivery"] == "true":
++
++				guaranteed_delivery = True
++
++			else:
++				guaranteed_delivery = False
++
++			messages = self.cometTopics.prepareToDeliver(
++											clientDeliver["data"],
++											clientDeliver["clientId"],
++											clientDeliver["channel"],
++											guaranteed_delivery)
++
++			return messages
++    #~~~~~~~~~~~~~~~~~~~~~~~
++	#@json_unwrap
++	def Publish(self, clientPublish, request = None):
++		error = None
++
++		GlobalLogger.debug("BayeuxServer: In Publish, received: %s" % \
++			pprint.pformat(clientPublish),debug=True)
++
++		if not self.cometClients.validate(clientPublish["clientId"]):
++			error = [1105,self.json_errcodes[1105] % (clientPublish["clientId"])]
++
++		else:
++			if isinstance(clientPublish["channel"],list):
++				rList = clientPublish["channel"]
++			else:
++				rList = [clientPublish["channel"]]
++
++			new_topics = self.cometTopics.registerTopics(rList,clientPublish["clientId"])
++			if new_topics == []:
++				error = [1204,self.json_errcodes[1204] % (clientPublish["channel"])]
++
++			'''
++			Assume that all clients who register a topic also want to subscribe to it.
++			'''
++			for topic in new_topics:
++				if not self.cometTopics.subscribeToTopic(topic.channel,clientPublish["clientId"]):
++					error = [1206,self.json_errcodes[1206] % (clientPublish["channel"])]
++
++		if error:
++			return {	
++					"channel" : self.json_structure["subscribe"]["channel"],
++					"clientId" : clientPublish["clientId"], # from handshake w/server
++					"successful" : self.json_structure["subscribe"]["successful"][1], # "false"
++					"error" : error
++			}
++		return {
++				"channel" : self.json_structure["subscribe"]["channel"],
++				"clientId" : clientPublish["clientId"], # from handshake w/server
++				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
++		}
++
++    #~~~~~~~~~~~~~~~~~~~~~~~
++	#@json_unwrap
++	def Subscribe(self, clientSubscribe, request = None):
++		error = None
++
++		GlobalLogger.debug(
++			"BayeuxServer: In Subscribe, received: %s" \
++			% pprint.pformat(clientSubscribe),debug=True
++		)
++
++		clientId = clientSubscribe["clientId"]
++		subscription = clientSubscribe["subscription"]
++		jsonSub = self.json_structure["subscribe"]
++		if clientSubscribe["channel"] != jsonSub["channel"]:
++			error = [1201,self.json_errcodes[1201] % (clientSubscribe["channel"])]
++
++		elif not self.cometClients.validate(clientId):
++			error = [1105,self.json_errcodes[1105] % (clientId)]
++
++		if not error:
++			'''
++			Implicit topic publish is allowed. If someone subscribes to a nonexistent 
++			topic, create it, if the config allows this to happen. 
++			'''
++
++			# Subscription could be a string or a list. If string, make it a list.
++			if isinstance(subscription,basestring):
++				subscription = [subscription]
++
++			for topic in subscription: # This is an array of at least one topic/channel.
++				if not self.cometTopics.subscribeToTopic(topic,clientId):
++	
++					if not bayeux_config.implicitPublish:
++						error = [1205,self.json_errcodes[1205] % (topic)]
++						break
++	
++					elif not self.cometTopics.registerTopics([topic],clientId,implicit=True):
++						error = [1204,self.json_errcodes[1204] % (clientSubscribe["channel"])]
++						break
++
++					if not self.cometTopics.subscribeToTopic(topic,clientId):
++						error = [1206,self.json_errcodes[1206] % (clientSubscribe["channel"])]
++						break
++		if error:
++			return {
++					"channel" : self.json_structure["subscribe"]["channel"],
++					"clientId" : clientSubscribe["clientId"], # from handshake w/server
++					"successful" : self.json_structure["subscribe"]["successful"][1], # "false"
++					"error" : error
++					}
++
++		clientRef = self.cometClients.alreadyConnected(clientId)
++		success = "[" + json_encode({
++				"channel" : self.json_structure["subscribe"]["channel"],
++				"clientId" : clientSubscribe["clientId"], # from handshake w/server
++				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
++		}) + "]"
++		#if clientRef:
++		#	clientRef.stream.write(success)
++		return {
++				"channel" : self.json_structure["subscribe"]["channel"],
++				"clientId" : clientSubscribe["clientId"], # from handshake w/server
++				"successful" : self.json_structure["subscribe"]["successful"][0] # "true"
++		}
++
++    #~~~~~~~~~~~~~~~~~~~~~~~
++	#@json_unwrap
++	def Unsubscribe(self,clientUnsubscribe, request = None):
++		error = None
++
++		if clientUnsubscribe["channel"] != self.json_structure["unsubscribe"]["channel"]:
++			error = [1201,self.json_errcodes[1201] % (clientUnsubscribe["channel"])]
++			
++		clientId = clientUnsubscribe["clientId"]
++		
++		unsubscribe_list = clientUnsubscribe["subscription"]
++		if isinstance(unsubscribe_list, basestring):
++			unsubscribe_list = [unsubscribe_list]
++		
++		for topic in unsubscribe_list: 
++			if not self.cometTopics.unsubFromTopic(topic,clientId):
++				error = [1205,self.json_errcodes[1205] % (topic)]
++				break
++
++		if error:
++			return {"channel" : self.json_structure["unsubscribe"]["channel"],
++					"clientId" : clientId, # from handshake w/server
++					"successful" : self.json_structure["unsubscribe"]["successful"][1], # "false"
++					"error" : error
++					}
++		else:
++			return {"channel" : self.json_structure["unsubscribe"]["channel"],
++					"clientId" : clientId, # from handshake w/server
++					"successful" : self.json_structure["unsubscribe"]["successful"][0] # "true"
++				}
++
++	#~~~~~~~~~~~~~~~~~~
++   	#@json_unwrap
++	def Service(self,clientSvcRequest, request = None):
++		error = None
++
++		'''
++		Make sure they have handshook/connected. 
++		'''
++		client_id = clientSvcRequest["clientId"]
++		if not self.cometClients.validate(client_id):
++				error = [1105,self.json_errcodes[1105] % (client_id)]
++		
++		elif clientSvcRequest["channel"] == self.json_structure["lsService"]["channel"]:
++			'''
++			This is a sample system service, which executes "ls -l /tmp" and returns STDOUT.
++			'''
++			p = None
++			try:
++				p = subprocess.Popen(["ls","-l","/tmp"],stdout=subprocess.PIPE, 
++					stderr=subprocess.PIPE, close_fds=True)
++			except:
++				error = [701,self.json_errcodes[701] % \
++					(clientSvcRequest["channel"],formatExceptionInfo())]
++
++			if p:
++				stderr = p.stderr.read()
++				if stderr and stderr != '':
++					error = [701,self.json_errcodes[701] % (clientSvcRequest["channel"],p.stderr)]
++				else:
++					result = p.stdout.read()
++
++		elif clientSvcRequest["channel"][:12] == self.json_structure["urlService"]["channel"]:
++
++			try:
++				'''
++				Get component (some_channel) of /service/url/some_channel
++				'''
++				configChannel = clientSvcRequest["channel"].split('/')[3] # 4th member.
++
++			except (KeyError,IndexError):
++				'''
++				Unrecognized channel.
++				'''
++				error = [703,self.json_errcodes[703] % (clientSvcRequest["channel"])]
++
++			if not error:
++				try:
++					result = urllib2.urlopen(bayeux_config.serviceUrlEndpoints[configChannel]).read()
++				except IOError, e:
++					if hasattr(e, 'reason'):
++						GlobalLogging.error("Service URL failure: %s" % e.reason)
++						error = [702,self.json_errcodes[702] % (clientSvcRequest["url"],e.reason)]
++					elif hasattr(e, 'code'):
++						errorcode = "HTTP error code %d" % e.code
++						error = [702,self.json_errcodes[702] % (clientSvcRequest["url"],errorcode)]
++						GlobalLogging.error("%d %s" % (error[0],error[1]))
++		else:
++			'''
++			Unrecognized channel.
++			'''
++			error = [703,self.json_errcodes[703] % (clientSvcRequest["channel"])]
++					
++		if error:
++			return {"channel":clientSvcRequest["channel"],
++					"successful":self.json_structure["urlService"]["successful"][1], # "false"
++					"error":error
++				}
++		else:
++			return {"channel":clientSvcRequest["channel"],
++					"successful":self.json_structure["urlService"]["successful"][0], # "true"
++					"response":result
++				}
++
++# vim:ts=4:noet:
+diff --git a/cometd/bayeux_unit_test.py b/cometd/bayeux_unit_test.py
+new file mode 100644
+index 0000000..cdc5de9
+--- /dev/null
++++ b/cometd/bayeux_unit_test.py
+@@ -0,0 +1,214 @@
++import pdb
++import unittest
++import pprint
++
++from handy import *
++setGlobalLogger()
++
++import bayeux
++import bayeux_client
++import bayeux_server
++import cometd_session
++
++class BayeuxTest(unittest.TestCase):
++	def setUp(self):
++		self.clientStates = cometd_session.CometClients()
++		self.clientTopics = cometd_session.CometTopics()
++		self.bayeuxClient = bayeux_client.BayeuxClient()
++		self.bayeuxServer = bayeux_server.BayeuxServer(self.clientStates,self.clientTopics)
++
++	def tearDown(self):
++		del self.bayeuxClient
++		del self.bayeuxServer
++
++	def testGoodHandshake(self):
++		''' (1) Handshake test from client to server '''
++		result = self.bayeuxServer.Handshake(json_decode(self.bayeuxClient.Handshake()))
++		pprint.pprint(result)
++		print "\n\n"
++
++	def testBadHandshake(self):
++		''' (2) Handshake test which fails from client to server: 
++			Unravel and modify client response. Re-encode and send to server. 
++		'''
++		client_handshake_init = json_decode(self.bayeuxClient.Handshake())
++		client_handshake_init["channel"] = "/some/garbage"
++		result = self.bayeuxServer.Handshake(client_handshake_init)
++		print "From testBadHandshake:",result["error"]
++		pprint.pprint(result)
++		print "\n\n"
++
++	def testPasswdAuthHandshake(self):
++		''' (3) Handshake which has to authenticate via htpasswd user name and password 
++			(2 requests)
++		'''
++		client_handshake_init = self.bayeuxClient.Handshake()
++		server_response = self.bayeuxServer.Handshake(json_decode(client_handshake_init))
++		pprint.pprint(server_response)
++		print "\n\n"
++
++		''' Fail the client. Recommend that the client authenticate themselves. 
++			Pass it back to the client. 
++		'''
++		server_response["successful"] = 
++			{"successful":self.bayeuxServer.json_structure["handshake"]["successful"][1]} # False
++		server_response["error"] = [1103,self.bayeuxServer.json_errcodes[1103]]
++		server_response["advice"] = 
++			{"authenticate":{"authtype": \
++				self.bayeuxServer.json_structure["handshake"]["advice"]["authenticate"]["authtype"]}}
++
++		print "Server sending back demand for login, failing handshake:"
++		pprint.pprint(server_response)
++		print "\n\n"
++		''' Client detects error, responds incorrectly, passes it back to the server. '''
++		nserver_response = self.bayeuxServer.Handshake(json_decode( \
++			self.bayeuxClient.Handshake(server_response,"gloriajw","5test1234")))
++
++		''' Server detects login error '''
++		print "Intentional wrong password from client: server response:",server_response["error"]
++		pprint.pprint(nserver_response)
++		print "\n\n"
++
++		''' Client responds correctly this time. '''
++		server_response = self.bayeuxServer.Handshake(json_decode(self.bayeuxClient.Handshake(None,
++				"gloriajw","test1234")))
++
++		print "Correct login from client:"
++		pprint.pprint(server_response)
++		print "\n\n"
++
++		''' Check out server response for errors. '''
++		if server_response.has_key("error"):
++			print "Whoops, the client/server http auth failed:",server_response["error"]
++		else:
++			print "If you're down here, test (3) should be fine."
++
++	def testConnect(self):
++		''' (4) Test a connect. '''
++		handshake = self.bayeuxServer.Handshake(json_decode(\
++			self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
++		client_connect = self.bayeuxClient.Connect(\
++			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
++		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
++		pprint.pprint(server_response)
++		print "\n\n"
++
++	def testService(self):
++		''' (5) Test local service request. '''
++		handshake = self.bayeuxServer.Handshake(\
++			json_decode(self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
++		print "Handshake:"
++		pprint.pprint(handshake)
++		print "\n\n"
++
++		client_connect = self.bayeuxClient.Connect(\
++			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
++		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
++		print "Connect:"
++		pprint.pprint(client_connect)
++		print "\n\n"
++
++		result = self.bayeuxServer.Service(json_decode(\
++			self.bayeuxClient.LocalService(handshake["clientId"])))
++		print "Local service response:"
++		pprint.pprint(result)
++		print "\n\n"
++
++		result = self.bayeuxServer.Service(json_decode(\
++			self.bayeuxClient.URLService(handshake["clientId"])))
++		print "URL service response:"
++		pprint.pprint(result)
++		print "\n\n"
++
++	def testPublishSubscribe(self):
++		''' (6) Test publish and subscribe with per-message guaranteed delivery. '''
++		handshake = self.bayeuxServer.Handshake(json_decode(\
++			self.bayeuxClient.Handshake(None,"gloriajw","test1234")))
++		print "Handshake:"
++		pprint.pprint(handshake)
++		print "\n\n"
++
++		client_connect = self.bayeuxClient.Connect(\
++			handshake["clientId"],handshake["supportedConnectionTypes"][1]) # long_polling
++		server_response = self.bayeuxServer.Connect(json_decode(client_connect))
++		print "Connect:"
++		pprint.pprint(client_connect)
++		print "\n\n"
++		print "Server response:"
++		pprint.pprint(server_response)
++		print "\n\n"
++
++		handshake2 = self.bayeuxServer.Handshake(json_decode(\
++			self.bayeuxClient.Handshake(None,"gloriajw2","test12345")))
++		print "Handshake:"
++		pprint.pprint(handshake2)
++		print "\n\n"
++
++		client2_connect = self.bayeuxClient.Connect(\
++			handshake2["clientId"],handshake2["supportedConnectionTypes"][1]) # long_polling
++		server_response = self.bayeuxServer.Connect(json_decode(client2_connect))
++		print "Connect:"
++		pprint.pprint(client2_connect)
++		print "\n\n"
++		print "Server response:"
++		pprint.pprint(server_response)
++		print "\n\n"
++
++		id=1
++
++		client_publish = self.bayeuxClient.Publish(\
++			handshake["clientId"],"/twelfth/night","No meaningful data for the moment.",id,True)
++		server_response = self.bayeuxServer.Publish(json_decode(client_publish))
++		print "Publish:"
++		pprint.pprint(client_publish)
++		print "\n\n"
++		print "Server response:"
++		pprint.pprint(server_response)
++		print "\n\n"
++
++		client2_subscribe = self.bayeuxClient.Subscribe(\
++			handshake2["clientId"],["/twelfth/night"],True)
++		server_response = self.bayeuxServer.Subscribe(json_decode(client2_subscribe))
++		print "Subscribe:"
++		pprint.pprint(client2_subscribe)
++		print "\n\n"
++		print "Server response:"
++		pprint.pprint(server_response)
++		print "\n\n"
++			
++		f=open("../tests/twelfth_night","r")
++		act1scene1 = f.read()
++		f.close()
++
++		client2_deliver = self.bayeuxClient.Deliver(\
++			handshake2["clientId"],"/twelfth/night",act1scene1[0:2000],id,True)
++
++		'''
++		There should be 2 outbound messages, one for the sender, as a guaranteed delivery
++		ACK, the second to the subscriber.
++		'''
++		outbound_messages = self.bayeuxServer.PrepareToDeliver(json_decode(client2_deliver))
++
++		print "All Outbound messages:"
++		pprint.pprint(outbound_messages)
++
++		client_deliver = json_decode(self.bayeuxClient.Deliver(\
++			handshake["clientId"],"/twelfth/night",act1scene1[2001:5000],id,True))
++		[outbound_messages.append(x) for x in self.bayeuxServer.PrepareToDeliver(client_deliver)]
++
++		client_deliver = json_decode(self.bayeuxClient.Deliver(\
++			handshake["clientId"],"/twelfth/night",act1scene1[5001:],id,True))
++		[outbound_messages.append(x) for x in self.bayeuxServer.PrepareToDeliver(client_deliver)]
++
++		print "All Outbound messages:"
++		pprint.pprint(outbound_messages)
++
++def suite():
++    return unittest.makeSuite(BayeuxTest)
++
++if __name__ == '__main__':
++    # When this module is executed from the command-line, run all its tests
++    x=suite()
++    unittest.TextTestRunner().run(x)
++
++# vim:ts=4:noet:
+diff --git a/cometd/comet_js_headers.py b/cometd/comet_js_headers.py
+new file mode 100644
+index 0000000..be09dee
+--- /dev/null
++++ b/cometd/comet_js_headers.py
+@@ -0,0 +1,172 @@
++#
++# This needs to be redesigned.
++#
++# auto-generated configuration
++import md5,time
++
++tmp = md5.new()
++tmp.update(str(time.ctime()))
++mimeBoundary = tmp.hexdigest()
++errorHttpCode = 406
++
++ConnectionTypes = {
++	"iframe": {
++		"closeOnDelivery": False,
++		"preamble":		"""
++<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
++	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
++
++<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
++	<head>
++		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"></meta>
++		<title>cometd: The Long Tail of Comet</title>
++	</head>
++	<body onload="window.parent.dojox.cometd.tunnelCollapse();">
++		""",
++		"envelope":		"""
++			<br />
++			<script type="text/javascript">
++				window.parent.dojox.cometd.deliver(%s);
++			</script>
++			<br />
++		""" + (" " * 2048), # double this if it's not working
++		"keepalive":	"<br>" + (" " * 2048),
++		"signoff":		"""
++		<script type="text/javascript">
++			window.parent.dojox.cometd.disconnect();
++		</script>
++	</body>
++</html>
++		""",
++		# this tunnelInit is borrowed from Dojo
++		"tunnelInit":	"""
++<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
++	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
++
++<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
++	<head>
++		<title>cometd: The Long Tail of Comet</title>
++		<meta http-equiv="Content-Type" content="text/html; charset=utf-8"></meta>
++		<script type="text/javascript">
++			// window.parent.console.debug("tunnelInit");
++			var noInit = false;
++			var domain = "";
++			function init(){
++				var sparams = document.location.search;
++				if(sparams.length >= 0){
++					if(sparams.charAt(0) == "?"){
++						sparams = sparams.substring(1);
++					}
++					var ss = (sparams.indexOf("&amp;") >= 0) ? "&amp;" : "&";
++					sparams = sparams.split(ss);
++					for(var x=0; x<sparams.length; x++){
++						var tp = sparams[x].split("=");
++						if(typeof window[tp[0]] != "undefined"){
++							window[tp[0]] = ((tp[1]=="true")||(tp[1]=="false")) ? eval(tp[1]) : tp[1];
++						}
++					}
++				}
++
++				if(noInit){ return; }
++				/*
++				if(domain.length > 0){
++					document.domain = domain;
++				}
++				*/
++				if(window.parent != window){
++					//Notify parent that we are loaded.
++					window.parent.dojox.cometd.tunnelInit(window.location, document.domain);
++				}
++			}
++		</script>
++	</head>
++	<body onload="try{ init(); }catch(e){ alert(e); }">
++		<h4>cometd: The Long Tail of Comet</h4>
++	</body>
++</html>""",
++		"contentType": "text/html"
++	},
++
++	"callback-polling": {
++		# NOTE: the "callback-polling" method can be used via ScriptSrcIO for
++		# x-domain polling
++		"closeOnDelivery": True,
++		"preamble":		"",
++		# "envelope":		"cometd.deliver(%s);",
++		"envelope":		"(%s)",
++		"keepalive":	" ",
++		"signoff":		"",
++		"tunnelInit":	"",
++		"contentType": "text/javascript"
++	},
++
++	"long-polling": {
++		"closeOnDelivery": True,
++		"preamble":		"",
++		"envelope":		"%s",
++		"keepalive":	"",
++		"signoff":		"",
++		"tunnelInit":	"",
++		"contentType": "text/plain"
++	},
++
++	"ie-message-block": {
++		"closeOnDelivery": False,
++		"preamble":		"""<?xml version="1.0" encoding="UTF-8"?>
++			<cometd>
++		""",
++		"envelope":		"<message><![CDATA[%s]]></message>",
++		"keepalive":	"<message><![CDATA[]]></message>",
++		"signoff":		"""
++			</cometd>
++		""",
++		"tunnelInit":	"",
++		"contentType": "text/xml"
++	},
++
++	"mime-message-block": {
++		"closeOnDelivery": False,
++		"preamble":		"--"+mimeBoundary+"\r\n",
++		"envelope":		"""Content-Type: text/plain\r\n\r\n
++%s
++\r\n
++--"""+mimeBoundary+"\r\n",
++		"signoff":		"\n--"+mimeBoundary+"--\n",
++		"tunnelInit":	"",
++		"contentType": "multipart/x-mixed-replace; boundary=%s" % (mimeBoundary,)
++	},
++	# failed experiment
++	#		"preamble":		"",
++	#		"envelope":		"\n--"+mimeBoundary+"""
++	#Content-Type: text/plain\n\n
++	#%s
++	#
++	#""",
++	# --"""+mimeBoundary+"\n",
++
++#	"text-stream": {
++#		"closeOnDelivery": False,
++#		"preamble":		"--"+mimeBoundary+"\r\n",
++#		"envelope":		"""\r\n%s\r\n--"""+mimeBoundary+"\r\n"+(1024*" "),
++#		"signoff":		"\r\n--"+mimeBoundary+"--\r\n",
++#		"tunnelInit":	"",
++#		"contentType": "text/plain"
++#	},
++
++#	"flash": {
++#		"closeOnDelivery": False,
++#		"preamble":		"",
++#		"envelope":		"",
++#		"signoff":		"",
++#		"tunnelInit":	"",
++#		"contentType": "text/xml"
++#	}
++}
++
++# need to specify http-polling for entirely disconnected clients!
++
++SupportedConnectionTypes = [
++	"callback-polling", "long-polling", 
++	 "mime-message-block", "iframe", 
++	 # "ie-message-block", # doesn't really work?
++]
+diff --git a/cometd/cometd.py b/cometd/cometd.py
+new file mode 100644
+index 0000000..b83a737
+--- /dev/null
++++ b/cometd/cometd.py
+@@ -0,0 +1,442 @@
++# Copyright (C) The Dojo Foundation 2006-2008
++# All rights reserved.
++#
++# Distributed under the terms of the BSD License
++#
++#############################################################################
++# Handy CometD I/O details:
++#
++# (1) There are two layers of communication happening here. 
++# The first, HTTP layer, is the topmost two-way layer between the client and server.
++# This layer must ALWAYS either be a 500 or a 200, or the client tries to reconnect wildly. 
++# Note that the hard coded HTTP header wrapper data is in comet_js_headers.py
++# 
++# (2) A handshake is sent to the server first, via HTTP.
++# No stream (layer 2) is established yet. The connect() request arrives at the server
++# via HTTP, the stream is established, and layer 2 is up. Once layer 2 is up, 
++# everything traveling from server to client must be echoed to both layers. 
++# On the stream layer, raw JSON array is sent. On the HTTP layer, the same JSON array 
++# is properly wrapped in a 200 (or 500 upon failure) and sent across the HTTP layer 
++# (simply returned).
++#
++# (3) On a long-polling connection the client must repeatedly send connect() messages. 
++# With long-polling,the stream is closed after each send, and must be reopened.
++# Upon a connect receipt and stream reopen, all deferred messages are sent at this time. 
++#
++# (4) The stream I/O is only one-way, from server to client. All communication 
++# from client to server is via HTTP. After a connect() is satisfied, all 
++# communication from server to client is BOTH HTTP and stream, as stated in (2)
++#
++# (5) To be clear, # scenes, all of this communication is happening across the 
++# HTTP socket that opens when a client issues a request 9such as a connect())
++# to the server. All data is sent in the response, along the same socket. 
++#############################################################################
++import twisted
++import twisted.web2
++from twisted.web2 import http, resource, channel, stream, server, static, http_headers, responsecode
++from twisted.python import log
++from twisted.internet import reactor
++from twisted.application import service, strports
++from sets import Set
++import re
++import os
++import md5
++import time
++import string
++import base64
++import types
++import weakref
++import copy
++
++import pdb
++import pprint
++
++from handy import *
++setGlobalLogger(twisted.python.log)  # set this as early as possible.
++
++import bayeux_config
++import bayeux_server
++import cometd_session
++import comet_js_headers
++
++'''
++Testing mode reads data from an HTTP request a bit differently, and may also
++have different stream requirements.
++'''
++global TESTING
++TESTING = bayeux_config.testingMode
++
++
++'''
++The cleanup timer is a timer for periodic cleanup, such as
++timeouts of idle connections, etc.
++'''
++global CleanupTimer
++CleanupTimer = rightNowInUTC(bayeux_config.serverTimeZone)
++
++"""
++The cometd modules provides a twisted.web2.resource.Resource endpoint which
++acts as a generalized multi-endpoint event router that speaks the cometd JSON
++message format and protocol on the wire.
++"""
++
++'''
++Bayeux protocol server side handling.
++
++CometD session handling, such as making sure handshake preceed connect requests,
++timing out old unconnected handshakes, etc. 
++'''
++global ClientStates,ClientTopics,BayeuxServer
++CometClients = cometd_session.CometClients()
++ClientTopics = cometd_session.CometTopics()
++BayeuxServer = bayeux_server.BayeuxServer(CometClients,ClientTopics)
++
++# constants and configuration
++verbose = True
++
++# FIXME: implement advices!
++# FIXME: need to implement resource constraints
++
++def buildResponse(request, data, code=200, type="text/html", headers={}):
++	jsonpCallbackHdr = ""
++	jsonpCallbackFtr = ""
++	if request:
++		if "jsonp" in request.args:
++			jsonpCallbackHdr = request.args["jsonp"][0] + "("
++			jsonpCallbackFtr = ")"
++
++	respStream = None
++	if isinstance(data, stream.ProducerStream):
++		respStream = data
++	else:
++		if not isinstance(data,str):
++			data = jsonpCallbackHdr \
++				+ json_encode(data) \
++				+ jsonpCallbackFtr
++
++		respStream = stream.MemoryStream(data)
++
++	thead = http_headers.Headers()
++	thead.addRawHeader("Content-Type", type)
++	for name in headers:
++		thead.addRawHeader(name, headers[name])
++
++	return http.Response(code, stream=respStream, headers=thead)
++
++
++SupportedFixedTopics = {
++	"/meta/handshake":		BayeuxServer.Handshake,
++	"/meta/connect":		BayeuxServer.Connect,
++	"/meta/disconnect":		BayeuxServer.Disconnect,
++	"/meta/publish":		BayeuxServer.Publish,
++	"/meta/subscribe":		BayeuxServer.Subscribe,
++	"/meta/unsubscribe":	BayeuxServer.Unsubscribe,
++	"/service/urlService":	BayeuxServer.Service
++}
++
++class cometd(resource.PostableResource):
++
++	def __init__(self):
++		pass
++
++	# FIXME: we need to implement client culling. Choices are between keeping a
++	# list of update times and associated clients, but that requires a
++	# per-message, per-client update to the state to remove the clients from
++	# the "below the line" state.
++
++	def locateChild(self, request, segments):
++		# when we're reached, switch immediately to render mode
++		if verbose:
++			log.msg(request)
++			log.msg(segments)
++		return (self, server.StopTraversal)
++	
++	def http_POST(self, request):
++		# we override the upstream version because it doesn't handle
++		# JSON mime types
++		from twisted.web2 import http, fileupload, responsecode, stream
++		
++		if request.stream.length == 0:
++			d = defer.succeed(None)
++		else:
++			parser = None
++			ctype = request.headers.getHeader('content-type')
++
++			if ctype is None:
++				d = defer.succeed(None)
++			else:
++				def updateArgs(data):
++					args = data
++					request.args.update(args)
++				
++				def updateJson(data):
++					request.args['message'] = [data]
++				
++				def error(f):
++					raise http.HTTPError(responsecode.BAD_REQUEST)
++				
++				if ctype.mediaType == 'application' and ctype.mediaSubtype == 'x-www-form-urlencoded':
++					d = fileupload.parse_urlencoded(request.stream)
++					d.addCallbacks(updateArgs, error)
++				elif ctype.mediaType in ('application','text') and ctype.mediaSubtype == 'json':
++					d = stream.readStream(request.stream, updateJson)
++					d.addErrback(error)
++				else:
++					raise http.HTTPError(responsecode.BAD_REQUEST)
++		
++		return d.addCallback(lambda res: self.render(request))
++	
++	def render(self, request):
++		global CleanupTimer
++
++		'''
++		Do some cleanup every N minutes.
++		'''
++		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
++		if (CleanupTimer + datetime.timedelta(minutes=bayeux_config.cleanupTimer) <= rightnow):
++			'''
++			This will disconnect clients who are idle for too long (bayeux_config.py)
++			'''
++			CometClients.checkActivityTimers()
++			CleanupTimer = rightnow
++		
++		"""
++		parse the request, dispatching it to the event router as necessaray and
++		returning errors where appropriate
++		"""
++		if verbose: log.msg("----------------------- render -----------------------------")
++		messages = None
++		resp = []
++
++		# we'll get called as the result of a post or get
++		if verbose: log.msg(request.args)
++
++		# if we get a tunnelInit request in the form of:
++		# 	http://blah.endpoint.com/cometd/?tunnelInit=iframe&domain=endpoint.com
++		# just pass back a MemoryStream that has the right junk
++		if request.args.has_key("tunnelInit") and \
++			comet_js_handlers.ConnectionTypes.has_key(request.args["tunnelInit"][0]):
++
++			resp = comet_js_handlers.ConnectionTypes[request.args["tunnelInit"][0]]["tunnelInit"]
++			if verbose: log.msg(resp)
++			return buildResponse(None,resp)
++
++		# otherwise if we got a "message" parameter, deserialize it
++
++		'''
++		In Testing mode, the args parameter does not get set 
++		(this is a documented Twisted
++		bug, never fixed, happens when data is sent via httplib).
++		Request data arrives as part of the header, and gets 
++		transfered to the args parameter here.
++		'''
++		if not request.args.has_key("message") and TESTING:
++			request.args['message'] = []
++			for i in request.headers._raw_headers["message"]:
++				request.args['message'].append(i[2:-2])
++
++		if request.args.has_key("message"):
++			try:
++				# log.msg(request.args["message"][0])
++				messages = json_decode(request.args["message"][0])
++			except ValueError:
++				if verbose: log.msg("message parsing error")
++				return buildResponse(None,
++									"message not valid JSON", 
++									comet_js_headers.errorHttpCode, 
++									"text/plain")
++		else:
++			return buildResponse(None, 
++								"No message provided. Pass a message parameter to CometD", 
++								400)
++
++		ctr = 0
++		if verbose: log.msg("messages:", type(messages), ":",  json_encode(messages))
++		while len(messages):
++			if verbose: log.msg(len(messages))
++			m = messages.pop(0)
++			if not isinstance(m, dict):
++				continue
++			"""
++			if isinstance(m, types.StringTypes):
++				log.msg(m)
++				break
++			if isinstance(m, types.NoneType):
++				continue
++			"""
++			if not m.has_key("channel"):
++				resp.append({"error":"invalid message passed"})
++				break
++				# continue
++
++			#pdb.set_trace()
++			value = None
++			if SupportedFixedTopics.has_key(m["channel"]):
++				log.msg("Channel: >>>>%s<<<<" % m["channel"])
++				value = SupportedFixedTopics[m["channel"]](m,request)
++				if isinstance(value, dict):
++					if value.has_key("error"):
++						if value["error"]:
++							log.msg("Response is: %s" % pprint.pformat(value))
++							return buildResponse(request, value, 500, "text/plain")
++					if m.has_key("clientId"):
++						if CometClients.connectedClients.has_key(m["clientId"]):
++							CometClients.connectedClients[m["clientId"]].deliver(value)
++							CometClients.setActivityTimer(m["clientId"])
++						else:
++							value["error"] = 'true'
++							log.msg("Throwing away message %s for client %s, \
++								client has disconnected." % (pprint.pformat(value),m["clientId"]))
++							return buildResponse(request, 
++								'Message from invalid or disconnected client, ignored', 
++								500, "text/plain")
++					resp.append(value)
++				else:
++					resp = value
++					break
++
++				log.msg("Response is: %s" % pprint.pformat(resp))
++
++			else:
++				'''
++				Otherwise we're publishing. Route the message to listeners
++
++				If implicit subscribe via publish is allowed, do it.
++				Only do it for connected clients (handshake/connect).
++				'''
++				if CometClients.connectedClients.has_key(m["clientId"]):
++					log.msg("Routing: %s" % m)
++					value = BayeuxServer.Publish(m,request)
++					if value.has_key("error"):
++						if value["error"]:
++							log.msg("Response is: %s" % pprint.pformat(value))
++							return buildResponse(request, value, 500, "text/plain")
++					# Don't append this value. We fabricated this call.
++					#resp.append(value)
++					value = self.route(request, m)
++					resp.append(value)
++				else:
++					log.msg("Throwing away message %s from client %s for other clients, \
++						originating client has disconnected." % (pprint.pformat(resp),m["clientId"]))
++					return buildResponse(request, 'Message from invalid client, ignored', 
++						500, "text/plain")
++
++			# FIXME: implement /meta/ping and /meta/status !!
++			ctr += 1
++
++		# FIXME: 
++		#		need to determine here if/how we should be delivering back on
++		#		an open connection channel if one was pre-existing
++		if resp != []:
++			return buildResponse(request, resp, type="text/plain")
++
++	############################################################################
++	# PROTOCOL METHODS
++	############################################################################
++
++	def initHandshake(self, request, message):
++		# handle initial auth and create a Connection that subsequent
++		# /meta/connect messages can talk to
++
++		resp = BayeuxServer.Handshake(message)
++
++		log.msg("CLIENT MSG:==> %s ==> %s" % (pprint.pformat(request),pprint.pformat(message)))
++		rstr = [ resp ]
++		if verbose: log.msg("initHandshake response:", rstr)
++
++		return buildResponse(request, rstr, type="text/plain")
++
++	def _sanityCheckConnection(self, request, message):
++		isSane = True
++		errorResp = None
++		error = ""
++
++		# sanity check the connection request
++		if not message.has_key("clientId") or \
++			not CometClients.connectedClients.has_key(message["clientId"]):
++			isSane = False
++			error = "invalid clientId provided"
++			# log.msg(message["clientId"])
++		elif "connectionType" not in message or \
++			message["connectionType"] not in SupportedConnectionTypes:
++			isSane = False
++			error = "invalid connectionType requested"
++		if not isSane:
++			resp = json_encode({ "error": str(error) })
++			errorResp = buildResponse(request, resp, 500, "text/plain")
++
++		return errorResp
++
++	def connect(self, request, message):
++		error =  self._sanityCheckConnection(request, message)
++		if error:
++			return error
++		CometClients.connectedClients[message["clientId"]].reconnect()
++
++	def route(self, request, message):
++		"""
++		Event routing and delivery. The guts of cometd.
++		"""
++		error = self._sanityCheckConnection(request, message)
++
++		result = { 
++			"successful": True,
++			"channel": message["channel"]
++		}
++		if message.has_key("id") and message["id"] is not None:
++			result["id"] = message["id"]
++
++		'''
++		All possible glob combos for single and double globbing 
++		are pre-expanded in this dict. 
++		The key = the match, the value = array of exact match topics.
++		'''
++
++		already_sent = Set([])
++		message_topic = message["channel"]
++
++		'''
++		Topic patterns aren't stored with trailing slashes.
++		Make sure the message topic does not have one either. 
++		'''
++		if message_topic[-1] == '/':
++			message_topic = copy.deepcopy(message["channel"])
++			message_topic = message_topic[0:-1]
++
++		'''
++		Keep track of clients whom have already received this message.
++		The same clients could be listed in more than one glob match. 
++		'''
++		if ClientTopics.quickTopicMatch.activeTopics.has_key(message_topic):
++			no_match = []
++			for client_id in ClientTopics.quickTopicMatch.activeTopics[message_topic]:
++				if (client_id not in already_sent) and (CometClients.connectedClients.has_key(client_id)):
++					CometClients.connectedClients[client_id].deliver(message)
++					'''
++					One problem with this timer: It is reset upon send and receive. 
++					There is currently no tracking for clients who have only received
++					but had sent nothing for some period of time. 
++					'''
++					CometClients.setActivityTimer(client_id)
++					already_sent.add(client_id)
++				else:
++					no_match.append(client_id)
++
++			if no_match != []:
++				result["successful"] = False
++				result["error"] = [1401,BayeuxServer.json_errcodes[1401] % (message_topic)]
++				if verbose: log.msg("Program Error: these client_ids are in the quick Topic match, \
++					but are not connected: %s, the message was not routed." % \
++					pprint.pformat(no_match))
++				
++			return result
++
++		result["successful"] = False
++		result["error"] = [1301,BayeuxServer.json_errcodes[1301] % (message_topic)]
++		if verbose: log.msg("No topic:", message_topic, 
++			"matches for delivery. If implicit subscribe is allowed, it will be done now.")
++		return result
++
++		# FIXME: aggregate ACKs!
++
++# vim:ts=4:noet:
+diff --git a/cometd/cometd_session.py b/cometd/cometd_session.py
+new file mode 100644
+index 0000000..d992209
+--- /dev/null
++++ b/cometd/cometd_session.py
+@@ -0,0 +1,579 @@
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Comet state and topic handling.
++#
++# GloriaJW. 2008_01_06
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++import pdb
++import datetime,random,string
++import pprint
++from sets import Set
++
++from twisted.web2 import stream, http_headers, http
++import bayeux
++import bayeux_config
++import comet_js_headers
++from handy import *
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Global functions
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# def implicitGroupName():
++# 	'''
++# 	Six random letters followed by a timestamp string.
++# 	'''
++# 	#chars=string.letters + string.digits
++# 	chars=string.letters
++# 	return "%s%s" % (''.join([random.choice(chars) for i in xrange(6)],
++# 		rightNowInUTC(bayeux_config.serverTimeZone).strftime("%Y%d%m%H%M%S")))
++
++def generateMessageId():
++	return (''.join([random.choice(string.digits) for i in xrange(10)]))
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Generic classes
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class Singleton(object):
++    def __new__(type):
++        if not '_the_instance' in type.__dict__:
++            type._the_instance = object.__new__(type)
++        return type._the_instance
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Data containers
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class HandshakeState:
++	def __init__(self,client_id,auth_type):
++		self.client_id = client_id
++		self.auth_type = auth_type
++		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
++
++class ConnectedState:
++	def __init__(self,client_id,auth_type,connection_type,request=None):
++		self.client_id = client_id
++		self.auth_type = auth_type
++		self.connection_type = connection_type
++		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
++		self.lastActivity = rightNowInUTC(bayeux_config.serverTimeZone)
++		#self.stream = stream.ProducerStream()
++		'''
++		Don't del this stream, or reset it to None.
++		Let it go out of scope naturally. Twisted may be holding a reference
++		to it that may not be apparent/visible to you. 
++		'''
++		self.stream = None
++		self.ctypeProps = comet_js_headers.ConnectionTypes[self.connection_type]
++		self.contentType = self.ctypeProps["contentType"]
++		self.jsonpCallbackHdr = ""
++		self.jsonpCallbackFtr = ""
++		self.messageBacklog = []
++
++		if request:
++			'''
++			If we have an HTTP request, send this preamble upon connection.
++			'''
++			self.stream = stream.ProducerStream()
++			self.stream.write(self.ctypeProps["preamble"])
++			self.checkCallbackPolling(request)
++			if self.ctypeProps["closeOnDelivery"]:
++				self.stream.finish()
++				#self.stream = None
++
++	#~~~~~~~~~~~~
++	def __del__(self):
++		GlobalLogger.debug("Closing stream.",debug=True)
++		try:
++			self.stream.finish()
++		except:
++			pass
++	#~~~~~~~~~~~~
++	def checkCallbackPolling(self,request):
++		'''
++		Check for callback-polling (JSONP on a cross-domain cometd server)
++		'''
++		if request:
++			if "jsonp" in request.args:
++				self.jsonpCallbackHdr = request.args["jsonp"][0] + "("
++				self.jsonpCallbackFtr = ");"
++
++	#~~~~~~~~~~~~
++	def reconnect(self,request=None,message=None):
++		'''
++		Don't resend preamble upon reconnect?
++		'''
++		if self.stream:
++			if not self.stream.closed:
++				self.stream.finish()
++
++		self.stream = stream.ProducerStream()
++
++		self.checkCallbackPolling(request)
++		self.deliver(message)
++
++	#~~~~~~~~~~~~
++	def deliver(self,message=None):
++		if message:
++			if isinstance(message,list):
++				(self.messageBacklog.append(x) for x in message)
++			else:
++				self.messageBacklog.append(message)
++
++		if not self.stream:
++			self.stream = stream.ProducerStream()
++
++		elif self.stream.closed:
++			GlobalLogger.warn("Queueing messages for client %s, stream is closed! \
++				Will reconnect and send upon next connect request from client." % self.client_id)
++			return False
++
++		'''
++		Send entire message array as one chunk.
++		'''
++		if self.messageBacklog != []:
++			GlobalLogger.info("Delivering messages for client %s: %s" % \
++				(self.client_id,self.messageBacklog))
++			outbound = self.jsonpCallbackHdr \
++								+ self.ctypeProps["envelope"] % json_encode(self.messageBacklog) \
++								+ self.jsonpCallbackFtr
++			self.stream.write(outbound)
++
++			self.messageBacklog = []
++
++			'''
++			Only close the stream here if we've used it here.
++			Otherwise leave it open. The HTTP buildResponse will make use of it.
++			'''
++			if self.ctypeProps["closeOnDelivery"]:
++				self.stream.finish()
++
++		return True
++
++	#~~~~~~~~~~~~
++	def buildResponse(self,request, data, code=200, type="text/html", headers={}):
++		jsonpCallbackHdr = self.jsonpCallbackHdr
++		jsonpCallbackFtr = self.jsonpCallbackFtr
++		if request:
++			if "jsonp" in request.args:
++				jsonpCallbackHdr = request.args["jsonp"][0] + "("
++				jsonpCallbackFtr = ");"
++
++		respStream = None
++		if isinstance(data, stream.ProducerStream):
++			respStream = data
++		else:
++			if isinstance(data,str):
++				data = jsonpCallbackHdr \
++					+ json_encode(data) \
++					+ jsonpCallbackFtr
++
++			respStream = stream.MemoryStream(data)
++
++		thead = http_headers.Headers()
++		thead.addRawHeader("Content-Type", type)
++		for name in headers:
++			thead.addRawHeader(name, headers[name])
++
++		return http.Response(code, stream=respStream, headers=thead)
++
++class QuickTopicMatch(Singleton):
++	#~~~~~~~~~~~~
++	def __init__(self):
++		self.activeTopics = {}
++
++	#~~~~~~~~~~~~
++	def registerTopic(self,topic,client_id):
++		'''
++		Array of exact topic match to clients.
++		'''
++		if not self.activeTopics.has_key(topic.channel):
++			self.activeTopics[topic.channel] = Set([])
++		if not client_id in self.activeTopics[topic.channel]:
++			self.activeTopics[topic.channel].add(client_id)
++			GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
++				(client_id,topic.channel))
++
++		'''
++		Array of all clients subscribed to channels which match this wildcard topic.
++		'''
++		if not self.activeTopics.has_key(topic.single_wild):
++			self.activeTopics[topic.single_wild] = Set([])
++		if not client_id in self.activeTopics[topic.single_wild]:
++			self.activeTopics[topic.single_wild].add(client_id)
++			GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
++				(client_id,topic.single_wild))
++
++		'''
++		Array of all clients subscribed to channels matching the double wildcard.
++		'''
++		for dwild in topic.double_wild.keys():
++			if not self.activeTopics.has_key(dwild):
++				self.activeTopics[dwild] = Set([])
++			if not client_id in self.activeTopics[dwild]:
++				self.activeTopics[dwild].add(client_id)
++				GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
++					(client_id,dwild))
++
++	#~~~~~~~~~~~~
++	def removeTopic(self,topic,client_id):
++
++		try:
++			self.activeTopics[topic.channel].remove(client_id)
++		except KeyError:
++			pass
++		if len(self.activeTopics[topic.channel]) == 0:
++			del self.activeTopics[topic.channel]
++
++		try:
++			self.activeTopics[topic.single_wild].remove(client_id)
++		except KeyError:
++			pass
++		if len(self.activeTopics[topic.single_wild]) == 0:
++			del self.activeTopics[topic.single_wild]
++
++		for dwild in topic.double_wild.keys():
++			try:
++				self.activeTopics[dwild].remove(client_id)
++			except KeyError:
++				pass
++			if len(self.activeTopics[dwild]) == 0:
++				del self.activeTopics[dwild]
++
++
++class Topic: # also known as Channel
++	#~~~~~~~~~~~~
++	def __init__(self,client_id,channel,owner=None,implicit=False):
++		self.owner = owner # True if client id is the owner/originator of the topic.
++		self.client_id = client_id
++		self.channel = channel
++
++		subchannels = self.channel.split('/')[1:]
++		self.single_wild = '/' + '/'.join(s for s in subchannels[0:-1]) + '/*'
++
++		self.double_wild = {}
++		dlength = (len(subchannels)-1 if len(subchannels) > 1 else 1)
++
++		for i in xrange(1,dlength+1):
++			self.double_wild['/' + '/'.join(s for s in subchannels[0:i]) + '/**'] = self.channel
++		
++		'''
++		Implicit means it was created by a subscrible, not a publish,
++		and it has no owner (anyone can destroy it).
++		'''
++		self.implicit = implicit 
++
++		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# CometD Topic (Channel) Management Classes
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class CometTopics(Singleton):
++	def __init__(self):
++		self.topicsByClient = {} #  client_id, topic_name
++		self.clientsByTopic = {} #  topic_name, client_id
++		self.quickTopicMatch = QuickTopicMatch() #  topics and all wildcard expansions
++
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	# Topic (Channel) Handling
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	def publishTopic(self,topic_names,client_id):
++		return self.registerTopics(topic_names,client_id)
++
++	def registerTopics(self,topic_names,client_id,implicit=False):
++
++		new_topics = []
++		for topic_name in topic_names:
++
++			GlobalLogger.debug("Published topic %s for client %s" % \
++				(topic_name,client_id),debug=True)
++	
++			existing_topic = self.validateTopic(topic_name,client_id)
++			if existing_topic:
++				new_topics.append(existing_topic)
++				continue
++
++			new_topic = Topic(client_id,topic_name,client_id,implicit)
++	
++			if not self.topicsByClient.has_key(client_id):
++				self.topicsByClient[client_id] = {}
++	
++			if not self.topicsByClient[client_id].has_key(topic_name):
++				self.topicsByClient[client_id][topic_name] = {}
++	
++			self.topicsByClient[client_id][topic_name] = new_topic
++		
++			if not self.clientsByTopic.has_key(topic_name):
++				self.clientsByTopic[topic_name] = {}
++	
++			self.clientsByTopic[topic_name][client_id] = new_topic
++	
++			self.quickTopicMatch.registerTopic(new_topic,client_id)
++
++			new_topics.append(new_topic)
++	
++		return new_topics
++
++	#~~~~~~~~~~~~~~~~
++	def removeTopic(self,topic_name,client_id):
++		try:
++			owner_id = self.clientsByTopic[topic_name][client_id].owner
++			implicit = self.clientsByTopic[topic_name][client_id].implicit
++			if (owner_id == client_id) or implicit:
++				self.quickTopicMatch.removeTopic(self.clientsByTopic[topic_name][client_id],
++					client_id)
++				del self.clientsByTopic[topic_name][client_id]
++				del self.topicsByClient[client_id][topic_name]
++				return True
++			'''
++			Cannot remove if there is an owner, and you're not it.
++			'''
++			return False 
++
++		except (IndexError,KeyError):
++			GlobalLogger.debug("removeTopic: nonexistent topic, ignoring.",debug=True)
++			return False 
++
++	#~~~~~~~~~~~~~~~~
++	def removeClient(self,client_id):
++		for topic_name in self.clientsByTopic.keys():
++			for c_id in self.clientsByTopic[topic_name].keys():
++				if c_id == client_id:
++					self.removeTopic(topic_name,c_id)
++		for c_id in self.topicsByClient.keys():
++			if c_id == client_id:
++				del self.topicsByClient[c_id] 
++
++
++	#~~~~~~~~~~~~~~~~
++	def validateTopic(self,topic_name,client_id):
++		try:
++			return self.clientsByTopic[topic_name][client_id]
++		except (IndexError,KeyError):
++			return None
++	#~~~~~~~~~~~~~~~~
++	def alreadySubscribed(self,topic_name,client_id):
++		try:
++			existing_topic = self.clientsByTopic[topic_name].values()[0]
++		except:
++			return False
++
++		if self.topicsByClient.has_key(client_id):
++			return True
++
++	#~~~~~~~~~~~~~~~~
++	def subscribeToTopic(self,topic_name,client_id):
++		'''
++		Topics are the same for new client as they are for an existing client,
++		if topic name matchs.
++		'''
++		if self.alreadySubscribed(topic_name,client_id):
++			return True
++
++		try:
++			existing_topic = self.clientsByTopic[topic_name].values()[0]
++		except:
++			GlobalLogger.debug("Nonexistent topic, ignoring.",debug=True)
++			return False
++
++		if not self.topicsByClient.has_key(client_id):
++			self.topicsByClient[client_id] = {}
++
++		if not self.topicsByClient[client_id].has_key(topic_name):
++			self.topicsByClient[client_id][topic_name] = {}
++
++		self.topicsByClient[client_id][topic_name] = existing_topic
++		
++		if not self.clientsByTopic[topic_name].has_key(client_id):
++			self.clientsByTopic[topic_name][client_id] = existing_topic
++
++		GlobalLogger.debug("Client %s subscribed to topic %s" % (client_id,topic_name),debug=True)
++		return True
++
++	#~~~~~~~~~~~~~~~~
++	def unsubFromTopic(self,topic_name,client_id):
++		try:
++			del self.clientsByTopic[topic_name][client_id]
++			del self.topicsByClient[client_id][topic_name]
++
++		except:
++			pass
++
++		GlobalLogger.debug("Client %s unsubscribed from topic %s" % (client_id,topic_name),
++			debug=True)
++		return True
++
++	#~~~~~~~~~~~~~~~~
++	def prepareToDeliver(self,data,client_id,topic_name,guaranteed_delivery=False):
++		deliver_messages = []
++
++		try:
++			all_subscribers = self.clientsByTopic[topic_name].keys()
++		except (KeyError,IndexError):
++			GlobalLogger.debug("Nonexistent topic for delivery, ignoring.",debug=True)
++			return False
++
++		'''
++		Guaranteed delivery is sent out with the rest of the channel messages.
++		Right now, Guaranteed delivery is not true "end-to-end", which would require
++		an ACK from each subscriber, before sending the ACK back to the sender. 
++		'''
++		for c_id in self.clientsByTopic[topic_name].keys():
++			if c_id == client_id:
++				if guaranteed_delivery:
++					deliver_messages.append(
++						{"channel" : topic_name,
++							"clientId" : c_id,
++							"id" : generateMessageId(),
++							"successful" :"true",
++							"ext" :{"guaranteedDelivery":"true"}
++						}
++					)
++				'''
++				KLUDGE: send message back to the sender as well. 
++				'''
++				deliver_messages.append(
++					{"channel" : topic_name,
++						"clientId" : c_id,
++						"id" : generateMessageId(),
++						"data" : data
++					}
++				)
++			else:
++				deliver_messages.append(
++					{"channel" : topic_name,
++						"clientId" : c_id,
++						"id" : generateMessageId(),
++						"data" : data
++					}
++				)
++
++		return deliver_messages
++		
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# CometD Session Management Classes
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++class CometClients(Singleton):
++	def __init__(self):
++		self.handshakeClients = {}
++		self.connectedClients = {}
++
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	# Handshake handling
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	def registerHandshake(self,client_id,auth_type):
++		self.handshakeClients[client_id] = HandshakeState(client_id,auth_type)
++		GlobalLogger.debug("Cometd Clients: %s" %  pprint.pformat(self.handshakeClients),debug=True)
++
++	def removeHandshake(self,client_id):
++		try:
++			m = self.handshakeClients[client_id]
++			del self.handshakeClients[client_id]
++			return m
++		except:
++			return None
++
++	'''
++	Check if existing handshake timestamps have expired 
++	(should run in it's own thread).
++	'''
++	def checkHandshakeTimers(self,client_id=None):
++		'''
++		A bit of grace in exchange for time.
++
++		Ensure that it's in UTC 0. 
++		'''
++		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
++		if client_id:
++			try:
++				if (self.handshakeClients[client_id].timestamp + \
++						datetime.timedelta(milliseconds=bayeux_config.handshakeTimeout) <= rightnow):
++					del self.handshakeClients[client_id]
++					GlobalLogger.warn("CheckHandshakeTimers: Dropping client %s, \
++						timed out without connect." % self.handshakeClients[client_id])
++					return False
++				return True
++
++			except (KeyError,IndexError):
++				return False # client never handshook.
++
++		for c in handshakeClients:
++			if (c.timestamp + datetime.timedelta(milliseconds=bayeux_config.handshakeTimeout) \
++					<= rightnow):
++				del c
++				GlobalLogger.warn("CheckHandshakeTimers: Dropping client %s, \
++					timed out without connect." % c.clientId)
++
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	# Connect handling
++	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++	def registerConnect(self,client_id,auth_type,connection_type):
++		self.connectedClients[client_id] = ConnectedState(client_id,auth_type,connection_type)
++		GlobalLogger.debug("Cometd Connected Clients: %s " % \
++			pprint.pformat(self.connectedClients),debug=True)
++		return self.connectedClients[client_id].timestamp
++		
++	#~~~~~~~~~~~~~~~~
++	def alreadyConnected(self,client_id):
++		GlobalLogger.debug("Cometd Already Connected Clients: %s" % \
++			pprint.pformat(self.connectedClients),debug=True)
++		try:
++			return self.connectedClients[client_id]
++		except:
++			return None
++		
++	#~~~~~~~~~~~~~~~~
++	def disconnect(self,client_id):
++		try:
++			del self.connectedClients[client_id]
++			GlobalLogger.debug("Disconnected client %s" % client_id,debug=True)
++		except (KeyError,IndexError):
++			GlobalLogger.debug("Client %s not connected, ignored disconnect request." % \
++				client_id,debug=True)
++		
++	#~~~~~~~~~~~~~~~~
++	def validate(self,client_id):
++		if self.connectedClients.has_key(client_id):
++			return True
++		return False
++
++	#~~~~~~~~~~~~~~~~
++	def setActivityTimer(self,client_id):
++		try:
++			self.connectedClients[client_id].lastActivity = \
++				rightNowInUTC(bayeux_config.serverTimeZone)
++		except:
++			GlobalLogger.error("setActivityTimers: Client %s was not connected. \
++				Where did you get this client id from?" % self.connectedClients[client_id])
++
++	#~~~~~~~~~~~~~~~~
++	'''
++	Check if clients are inactive for too long.
++	'''
++	def checkActivityTimers(self,client_id=None):
++		'''
++		A bit of grace in exchange for time.
++
++		Ensure that it's in UTC 0. 
++		'''
++		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
++		if client_id:
++			try:
++				if (self.connectedClients[client_id].lastActivity + \
++					datetime.timedelta(minutes=bayeux_config.longPollingTimeout) <= rightnow):
++					self.disconnect(client_id)
++					GlobalLogger.warn("CheckActivityTimers: Dropping client %s, timed out due \
++						to inactivity." % self.connectedClients[client_id])
++					return False
++				return True
++
++			except (KeyError,IndexError):
++				return False # client never connected.
++
++		to_disconnect = []
++		for client_id in self.connectedClients:
++			if (self.connectedClients[client_id].lastActivity + \
++				datetime.timedelta(minutes=bayeux_config.longPollingTimeout) <= rightnow):
++				to_disconnect.append(client_id)
++				GlobalLogger.warn("CheckActivityTimers: Dropping client %s, timed out due to \
++					inactivity." % client_id)
++
++		for client_id in to_disconnect:
++			self.disconnect(client_id)
++# vim:ts=4:noet:
+diff --git a/cometd/handy.py b/cometd/handy.py
+new file mode 100644
+index 0000000..9503f97
+--- /dev/null
++++ b/cometd/handy.py
+@@ -0,0 +1,76 @@
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Handy generic functions.
++#
++# GloriaJW. 2008_01_20
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++import os,sys,traceback,datetime,pytz
++import logging # just in case we need it.
++import pdb
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Global variables
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++global GlobalLogger
++
++try:
++	import cjson # much faster than simplejson
++
++	def json_encode(some_struct):
++		return cjson.encode(some_struct)
++
++	def json_decode(some_struct):
++		return cjson.decode(some_struct)
++
++
++except:
++	import simplejson
++	def json_encode(some_struct):
++		return simplejson.dumps(some_struct)
++
++	def json_decode(some_struct):
++		return simplejson.loads(some_struct)
++
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++# Global functions
++#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++#~~~~ generic logging ~~~~~~~~~~~
++def setGlobalLogger(logging_module=None):
++	global GlobalLogger
++	if not logging_module:
++		try:
++			os.makedirs('./logs')
++		except:
++			pass
++
++		#logging.basicConfig(level=logging.DEBUG,
++		logging.basicConfig(level=logging.ERROR,
++			format='%(asctime)s %(levelname)s %(message)s',
++			filename='./logs/comet-bayeux.log',
++			filemode='a')
++
++		GlobalLogger = logging
++	else:
++		GlobalLogger = logging_module
++		GlobalLogger.info = GlobalLogger.msg
++		GlobalLogger.warn = GlobalLogger.msg
++		GlobalLogger.debug = GlobalLogger.msg
++
++#~~~~ generic error handling ~~~~~~~
++def formatExceptionInfo(maxTBlevel=5):
++	cla, exc, trbk = sys.exc_info()
++	excName = cla.__name__
++	try:
++		excArgs = ' '.join(exc.__dict__["args"])
++	except KeyError:
++		excArgs = "<no args>"
++		excTb = ' '.join(traceback.format_tb(trbk, maxTBlevel))
++		return excName + ":" + excArgs + ":" + excTb
++
++#~~~~ now() in UTC 0 ~~~~~~~
++def rightNowInUTC(serverTimeZone):
++	rightnow = datetime.datetime.now()
++	rightnow = pytz.timezone(serverTimeZone).localize(rightnow)
++	rightnow = rightnow.astimezone(pytz.timezone('UTC'))
++	return rightnow
++
++# vim:ts=4:noet:
+diff --git a/cometd_session.py b/cometd_session.py
+deleted file mode 100644
+index d992209..0000000
+--- a/cometd_session.py
++++ /dev/null
+@@ -1,579 +0,0 @@
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Comet state and topic handling.
+-#
+-# GloriaJW. 2008_01_06
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-import pdb
+-import datetime,random,string
+-import pprint
+-from sets import Set
+-
+-from twisted.web2 import stream, http_headers, http
+-import bayeux
+-import bayeux_config
+-import comet_js_headers
+-from handy import *
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Global functions
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# def implicitGroupName():
+-# 	'''
+-# 	Six random letters followed by a timestamp string.
+-# 	'''
+-# 	#chars=string.letters + string.digits
+-# 	chars=string.letters
+-# 	return "%s%s" % (''.join([random.choice(chars) for i in xrange(6)],
+-# 		rightNowInUTC(bayeux_config.serverTimeZone).strftime("%Y%d%m%H%M%S")))
+-
+-def generateMessageId():
+-	return (''.join([random.choice(string.digits) for i in xrange(10)]))
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Generic classes
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class Singleton(object):
+-    def __new__(type):
+-        if not '_the_instance' in type.__dict__:
+-            type._the_instance = object.__new__(type)
+-        return type._the_instance
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Data containers
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class HandshakeState:
+-	def __init__(self,client_id,auth_type):
+-		self.client_id = client_id
+-		self.auth_type = auth_type
+-		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
+-
+-class ConnectedState:
+-	def __init__(self,client_id,auth_type,connection_type,request=None):
+-		self.client_id = client_id
+-		self.auth_type = auth_type
+-		self.connection_type = connection_type
+-		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
+-		self.lastActivity = rightNowInUTC(bayeux_config.serverTimeZone)
+-		#self.stream = stream.ProducerStream()
+-		'''
+-		Don't del this stream, or reset it to None.
+-		Let it go out of scope naturally. Twisted may be holding a reference
+-		to it that may not be apparent/visible to you. 
+-		'''
+-		self.stream = None
+-		self.ctypeProps = comet_js_headers.ConnectionTypes[self.connection_type]
+-		self.contentType = self.ctypeProps["contentType"]
+-		self.jsonpCallbackHdr = ""
+-		self.jsonpCallbackFtr = ""
+-		self.messageBacklog = []
+-
+-		if request:
+-			'''
+-			If we have an HTTP request, send this preamble upon connection.
+-			'''
+-			self.stream = stream.ProducerStream()
+-			self.stream.write(self.ctypeProps["preamble"])
+-			self.checkCallbackPolling(request)
+-			if self.ctypeProps["closeOnDelivery"]:
+-				self.stream.finish()
+-				#self.stream = None
+-
+-	#~~~~~~~~~~~~
+-	def __del__(self):
+-		GlobalLogger.debug("Closing stream.",debug=True)
+-		try:
+-			self.stream.finish()
+-		except:
+-			pass
+-	#~~~~~~~~~~~~
+-	def checkCallbackPolling(self,request):
+-		'''
+-		Check for callback-polling (JSONP on a cross-domain cometd server)
+-		'''
+-		if request:
+-			if "jsonp" in request.args:
+-				self.jsonpCallbackHdr = request.args["jsonp"][0] + "("
+-				self.jsonpCallbackFtr = ");"
+-
+-	#~~~~~~~~~~~~
+-	def reconnect(self,request=None,message=None):
+-		'''
+-		Don't resend preamble upon reconnect?
+-		'''
+-		if self.stream:
+-			if not self.stream.closed:
+-				self.stream.finish()
+-
+-		self.stream = stream.ProducerStream()
+-
+-		self.checkCallbackPolling(request)
+-		self.deliver(message)
+-
+-	#~~~~~~~~~~~~
+-	def deliver(self,message=None):
+-		if message:
+-			if isinstance(message,list):
+-				(self.messageBacklog.append(x) for x in message)
+-			else:
+-				self.messageBacklog.append(message)
+-
+-		if not self.stream:
+-			self.stream = stream.ProducerStream()
+-
+-		elif self.stream.closed:
+-			GlobalLogger.warn("Queueing messages for client %s, stream is closed! \
+-				Will reconnect and send upon next connect request from client." % self.client_id)
+-			return False
+-
+-		'''
+-		Send entire message array as one chunk.
+-		'''
+-		if self.messageBacklog != []:
+-			GlobalLogger.info("Delivering messages for client %s: %s" % \
+-				(self.client_id,self.messageBacklog))
+-			outbound = self.jsonpCallbackHdr \
+-								+ self.ctypeProps["envelope"] % json_encode(self.messageBacklog) \
+-								+ self.jsonpCallbackFtr
+-			self.stream.write(outbound)
+-
+-			self.messageBacklog = []
+-
+-			'''
+-			Only close the stream here if we've used it here.
+-			Otherwise leave it open. The HTTP buildResponse will make use of it.
+-			'''
+-			if self.ctypeProps["closeOnDelivery"]:
+-				self.stream.finish()
+-
+-		return True
+-
+-	#~~~~~~~~~~~~
+-	def buildResponse(self,request, data, code=200, type="text/html", headers={}):
+-		jsonpCallbackHdr = self.jsonpCallbackHdr
+-		jsonpCallbackFtr = self.jsonpCallbackFtr
+-		if request:
+-			if "jsonp" in request.args:
+-				jsonpCallbackHdr = request.args["jsonp"][0] + "("
+-				jsonpCallbackFtr = ");"
+-
+-		respStream = None
+-		if isinstance(data, stream.ProducerStream):
+-			respStream = data
+-		else:
+-			if isinstance(data,str):
+-				data = jsonpCallbackHdr \
+-					+ json_encode(data) \
+-					+ jsonpCallbackFtr
+-
+-			respStream = stream.MemoryStream(data)
+-
+-		thead = http_headers.Headers()
+-		thead.addRawHeader("Content-Type", type)
+-		for name in headers:
+-			thead.addRawHeader(name, headers[name])
+-
+-		return http.Response(code, stream=respStream, headers=thead)
+-
+-class QuickTopicMatch(Singleton):
+-	#~~~~~~~~~~~~
+-	def __init__(self):
+-		self.activeTopics = {}
+-
+-	#~~~~~~~~~~~~
+-	def registerTopic(self,topic,client_id):
+-		'''
+-		Array of exact topic match to clients.
+-		'''
+-		if not self.activeTopics.has_key(topic.channel):
+-			self.activeTopics[topic.channel] = Set([])
+-		if not client_id in self.activeTopics[topic.channel]:
+-			self.activeTopics[topic.channel].add(client_id)
+-			GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
+-				(client_id,topic.channel))
+-
+-		'''
+-		Array of all clients subscribed to channels which match this wildcard topic.
+-		'''
+-		if not self.activeTopics.has_key(topic.single_wild):
+-			self.activeTopics[topic.single_wild] = Set([])
+-		if not client_id in self.activeTopics[topic.single_wild]:
+-			self.activeTopics[topic.single_wild].add(client_id)
+-			GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
+-				(client_id,topic.single_wild))
+-
+-		'''
+-		Array of all clients subscribed to channels matching the double wildcard.
+-		'''
+-		for dwild in topic.double_wild.keys():
+-			if not self.activeTopics.has_key(dwild):
+-				self.activeTopics[dwild] = Set([])
+-			if not client_id in self.activeTopics[dwild]:
+-				self.activeTopics[dwild].add(client_id)
+-				GlobalLogger.info("registerTopic: adding client ID %s for topic %s" % \
+-					(client_id,dwild))
+-
+-	#~~~~~~~~~~~~
+-	def removeTopic(self,topic,client_id):
+-
+-		try:
+-			self.activeTopics[topic.channel].remove(client_id)
+-		except KeyError:
+-			pass
+-		if len(self.activeTopics[topic.channel]) == 0:
+-			del self.activeTopics[topic.channel]
+-
+-		try:
+-			self.activeTopics[topic.single_wild].remove(client_id)
+-		except KeyError:
+-			pass
+-		if len(self.activeTopics[topic.single_wild]) == 0:
+-			del self.activeTopics[topic.single_wild]
+-
+-		for dwild in topic.double_wild.keys():
+-			try:
+-				self.activeTopics[dwild].remove(client_id)
+-			except KeyError:
+-				pass
+-			if len(self.activeTopics[dwild]) == 0:
+-				del self.activeTopics[dwild]
+-
+-
+-class Topic: # also known as Channel
+-	#~~~~~~~~~~~~
+-	def __init__(self,client_id,channel,owner=None,implicit=False):
+-		self.owner = owner # True if client id is the owner/originator of the topic.
+-		self.client_id = client_id
+-		self.channel = channel
+-
+-		subchannels = self.channel.split('/')[1:]
+-		self.single_wild = '/' + '/'.join(s for s in subchannels[0:-1]) + '/*'
+-
+-		self.double_wild = {}
+-		dlength = (len(subchannels)-1 if len(subchannels) > 1 else 1)
+-
+-		for i in xrange(1,dlength+1):
+-			self.double_wild['/' + '/'.join(s for s in subchannels[0:i]) + '/**'] = self.channel
+-		
+-		'''
+-		Implicit means it was created by a subscrible, not a publish,
+-		and it has no owner (anyone can destroy it).
+-		'''
+-		self.implicit = implicit 
+-
+-		self.timestamp = rightNowInUTC(bayeux_config.serverTimeZone)
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# CometD Topic (Channel) Management Classes
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class CometTopics(Singleton):
+-	def __init__(self):
+-		self.topicsByClient = {} #  client_id, topic_name
+-		self.clientsByTopic = {} #  topic_name, client_id
+-		self.quickTopicMatch = QuickTopicMatch() #  topics and all wildcard expansions
+-
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	# Topic (Channel) Handling
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	def publishTopic(self,topic_names,client_id):
+-		return self.registerTopics(topic_names,client_id)
+-
+-	def registerTopics(self,topic_names,client_id,implicit=False):
+-
+-		new_topics = []
+-		for topic_name in topic_names:
+-
+-			GlobalLogger.debug("Published topic %s for client %s" % \
+-				(topic_name,client_id),debug=True)
+-	
+-			existing_topic = self.validateTopic(topic_name,client_id)
+-			if existing_topic:
+-				new_topics.append(existing_topic)
+-				continue
+-
+-			new_topic = Topic(client_id,topic_name,client_id,implicit)
+-	
+-			if not self.topicsByClient.has_key(client_id):
+-				self.topicsByClient[client_id] = {}
+-	
+-			if not self.topicsByClient[client_id].has_key(topic_name):
+-				self.topicsByClient[client_id][topic_name] = {}
+-	
+-			self.topicsByClient[client_id][topic_name] = new_topic
+-		
+-			if not self.clientsByTopic.has_key(topic_name):
+-				self.clientsByTopic[topic_name] = {}
+-	
+-			self.clientsByTopic[topic_name][client_id] = new_topic
+-	
+-			self.quickTopicMatch.registerTopic(new_topic,client_id)
+-
+-			new_topics.append(new_topic)
+-	
+-		return new_topics
+-
+-	#~~~~~~~~~~~~~~~~
+-	def removeTopic(self,topic_name,client_id):
+-		try:
+-			owner_id = self.clientsByTopic[topic_name][client_id].owner
+-			implicit = self.clientsByTopic[topic_name][client_id].implicit
+-			if (owner_id == client_id) or implicit:
+-				self.quickTopicMatch.removeTopic(self.clientsByTopic[topic_name][client_id],
+-					client_id)
+-				del self.clientsByTopic[topic_name][client_id]
+-				del self.topicsByClient[client_id][topic_name]
+-				return True
+-			'''
+-			Cannot remove if there is an owner, and you're not it.
+-			'''
+-			return False 
+-
+-		except (IndexError,KeyError):
+-			GlobalLogger.debug("removeTopic: nonexistent topic, ignoring.",debug=True)
+-			return False 
+-
+-	#~~~~~~~~~~~~~~~~
+-	def removeClient(self,client_id):
+-		for topic_name in self.clientsByTopic.keys():
+-			for c_id in self.clientsByTopic[topic_name].keys():
+-				if c_id == client_id:
+-					self.removeTopic(topic_name,c_id)
+-		for c_id in self.topicsByClient.keys():
+-			if c_id == client_id:
+-				del self.topicsByClient[c_id] 
+-
+-
+-	#~~~~~~~~~~~~~~~~
+-	def validateTopic(self,topic_name,client_id):
+-		try:
+-			return self.clientsByTopic[topic_name][client_id]
+-		except (IndexError,KeyError):
+-			return None
+-	#~~~~~~~~~~~~~~~~
+-	def alreadySubscribed(self,topic_name,client_id):
+-		try:
+-			existing_topic = self.clientsByTopic[topic_name].values()[0]
+-		except:
+-			return False
+-
+-		if self.topicsByClient.has_key(client_id):
+-			return True
+-
+-	#~~~~~~~~~~~~~~~~
+-	def subscribeToTopic(self,topic_name,client_id):
+-		'''
+-		Topics are the same for new client as they are for an existing client,
+-		if topic name matchs.
+-		'''
+-		if self.alreadySubscribed(topic_name,client_id):
+-			return True
+-
+-		try:
+-			existing_topic = self.clientsByTopic[topic_name].values()[0]
+-		except:
+-			GlobalLogger.debug("Nonexistent topic, ignoring.",debug=True)
+-			return False
+-
+-		if not self.topicsByClient.has_key(client_id):
+-			self.topicsByClient[client_id] = {}
+-
+-		if not self.topicsByClient[client_id].has_key(topic_name):
+-			self.topicsByClient[client_id][topic_name] = {}
+-
+-		self.topicsByClient[client_id][topic_name] = existing_topic
+-		
+-		if not self.clientsByTopic[topic_name].has_key(client_id):
+-			self.clientsByTopic[topic_name][client_id] = existing_topic
+-
+-		GlobalLogger.debug("Client %s subscribed to topic %s" % (client_id,topic_name),debug=True)
+-		return True
+-
+-	#~~~~~~~~~~~~~~~~
+-	def unsubFromTopic(self,topic_name,client_id):
+-		try:
+-			del self.clientsByTopic[topic_name][client_id]
+-			del self.topicsByClient[client_id][topic_name]
+-
+-		except:
+-			pass
+-
+-		GlobalLogger.debug("Client %s unsubscribed from topic %s" % (client_id,topic_name),
+-			debug=True)
+-		return True
+-
+-	#~~~~~~~~~~~~~~~~
+-	def prepareToDeliver(self,data,client_id,topic_name,guaranteed_delivery=False):
+-		deliver_messages = []
+-
+-		try:
+-			all_subscribers = self.clientsByTopic[topic_name].keys()
+-		except (KeyError,IndexError):
+-			GlobalLogger.debug("Nonexistent topic for delivery, ignoring.",debug=True)
+-			return False
+-
+-		'''
+-		Guaranteed delivery is sent out with the rest of the channel messages.
+-		Right now, Guaranteed delivery is not true "end-to-end", which would require
+-		an ACK from each subscriber, before sending the ACK back to the sender. 
+-		'''
+-		for c_id in self.clientsByTopic[topic_name].keys():
+-			if c_id == client_id:
+-				if guaranteed_delivery:
+-					deliver_messages.append(
+-						{"channel" : topic_name,
+-							"clientId" : c_id,
+-							"id" : generateMessageId(),
+-							"successful" :"true",
+-							"ext" :{"guaranteedDelivery":"true"}
+-						}
+-					)
+-				'''
+-				KLUDGE: send message back to the sender as well. 
+-				'''
+-				deliver_messages.append(
+-					{"channel" : topic_name,
+-						"clientId" : c_id,
+-						"id" : generateMessageId(),
+-						"data" : data
+-					}
+-				)
+-			else:
+-				deliver_messages.append(
+-					{"channel" : topic_name,
+-						"clientId" : c_id,
+-						"id" : generateMessageId(),
+-						"data" : data
+-					}
+-				)
+-
+-		return deliver_messages
+-		
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# CometD Session Management Classes
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-class CometClients(Singleton):
+-	def __init__(self):
+-		self.handshakeClients = {}
+-		self.connectedClients = {}
+-
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	# Handshake handling
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	def registerHandshake(self,client_id,auth_type):
+-		self.handshakeClients[client_id] = HandshakeState(client_id,auth_type)
+-		GlobalLogger.debug("Cometd Clients: %s" %  pprint.pformat(self.handshakeClients),debug=True)
+-
+-	def removeHandshake(self,client_id):
+-		try:
+-			m = self.handshakeClients[client_id]
+-			del self.handshakeClients[client_id]
+-			return m
+-		except:
+-			return None
+-
+-	'''
+-	Check if existing handshake timestamps have expired 
+-	(should run in it's own thread).
+-	'''
+-	def checkHandshakeTimers(self,client_id=None):
+-		'''
+-		A bit of grace in exchange for time.
+-
+-		Ensure that it's in UTC 0. 
+-		'''
+-		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
+-		if client_id:
+-			try:
+-				if (self.handshakeClients[client_id].timestamp + \
+-						datetime.timedelta(milliseconds=bayeux_config.handshakeTimeout) <= rightnow):
+-					del self.handshakeClients[client_id]
+-					GlobalLogger.warn("CheckHandshakeTimers: Dropping client %s, \
+-						timed out without connect." % self.handshakeClients[client_id])
+-					return False
+-				return True
+-
+-			except (KeyError,IndexError):
+-				return False # client never handshook.
+-
+-		for c in handshakeClients:
+-			if (c.timestamp + datetime.timedelta(milliseconds=bayeux_config.handshakeTimeout) \
+-					<= rightnow):
+-				del c
+-				GlobalLogger.warn("CheckHandshakeTimers: Dropping client %s, \
+-					timed out without connect." % c.clientId)
+-
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	# Connect handling
+-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-	def registerConnect(self,client_id,auth_type,connection_type):
+-		self.connectedClients[client_id] = ConnectedState(client_id,auth_type,connection_type)
+-		GlobalLogger.debug("Cometd Connected Clients: %s " % \
+-			pprint.pformat(self.connectedClients),debug=True)
+-		return self.connectedClients[client_id].timestamp
+-		
+-	#~~~~~~~~~~~~~~~~
+-	def alreadyConnected(self,client_id):
+-		GlobalLogger.debug("Cometd Already Connected Clients: %s" % \
+-			pprint.pformat(self.connectedClients),debug=True)
+-		try:
+-			return self.connectedClients[client_id]
+-		except:
+-			return None
+-		
+-	#~~~~~~~~~~~~~~~~
+-	def disconnect(self,client_id):
+-		try:
+-			del self.connectedClients[client_id]
+-			GlobalLogger.debug("Disconnected client %s" % client_id,debug=True)
+-		except (KeyError,IndexError):
+-			GlobalLogger.debug("Client %s not connected, ignored disconnect request." % \
+-				client_id,debug=True)
+-		
+-	#~~~~~~~~~~~~~~~~
+-	def validate(self,client_id):
+-		if self.connectedClients.has_key(client_id):
+-			return True
+-		return False
+-
+-	#~~~~~~~~~~~~~~~~
+-	def setActivityTimer(self,client_id):
+-		try:
+-			self.connectedClients[client_id].lastActivity = \
+-				rightNowInUTC(bayeux_config.serverTimeZone)
+-		except:
+-			GlobalLogger.error("setActivityTimers: Client %s was not connected. \
+-				Where did you get this client id from?" % self.connectedClients[client_id])
+-
+-	#~~~~~~~~~~~~~~~~
+-	'''
+-	Check if clients are inactive for too long.
+-	'''
+-	def checkActivityTimers(self,client_id=None):
+-		'''
+-		A bit of grace in exchange for time.
+-
+-		Ensure that it's in UTC 0. 
+-		'''
+-		rightnow = rightNowInUTC(bayeux_config.serverTimeZone)
+-		if client_id:
+-			try:
+-				if (self.connectedClients[client_id].lastActivity + \
+-					datetime.timedelta(minutes=bayeux_config.longPollingTimeout) <= rightnow):
+-					self.disconnect(client_id)
+-					GlobalLogger.warn("CheckActivityTimers: Dropping client %s, timed out due \
+-						to inactivity." % self.connectedClients[client_id])
+-					return False
+-				return True
+-
+-			except (KeyError,IndexError):
+-				return False # client never connected.
+-
+-		to_disconnect = []
+-		for client_id in self.connectedClients:
+-			if (self.connectedClients[client_id].lastActivity + \
+-				datetime.timedelta(minutes=bayeux_config.longPollingTimeout) <= rightnow):
+-				to_disconnect.append(client_id)
+-				GlobalLogger.warn("CheckActivityTimers: Dropping client %s, timed out due to \
+-					inactivity." % client_id)
+-
+-		for client_id in to_disconnect:
+-			self.disconnect(client_id)
+-# vim:ts=4:noet:
+diff --git a/handy.py b/handy.py
+deleted file mode 100644
+index 9503f97..0000000
+--- a/handy.py
++++ /dev/null
+@@ -1,76 +0,0 @@
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Handy generic functions.
+-#
+-# GloriaJW. 2008_01_20
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-import os,sys,traceback,datetime,pytz
+-import logging # just in case we need it.
+-import pdb
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Global variables
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-global GlobalLogger
+-
+-try:
+-	import cjson # much faster than simplejson
+-
+-	def json_encode(some_struct):
+-		return cjson.encode(some_struct)
+-
+-	def json_decode(some_struct):
+-		return cjson.decode(some_struct)
+-
+-
+-except:
+-	import simplejson
+-	def json_encode(some_struct):
+-		return simplejson.dumps(some_struct)
+-
+-	def json_decode(some_struct):
+-		return simplejson.loads(some_struct)
+-
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-# Global functions
+-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-#~~~~ generic logging ~~~~~~~~~~~
+-def setGlobalLogger(logging_module=None):
+-	global GlobalLogger
+-	if not logging_module:
+-		try:
+-			os.makedirs('./logs')
+-		except:
+-			pass
+-
+-		#logging.basicConfig(level=logging.DEBUG,
+-		logging.basicConfig(level=logging.ERROR,
+-			format='%(asctime)s %(levelname)s %(message)s',
+-			filename='./logs/comet-bayeux.log',
+-			filemode='a')
+-
+-		GlobalLogger = logging
+-	else:
+-		GlobalLogger = logging_module
+-		GlobalLogger.info = GlobalLogger.msg
+-		GlobalLogger.warn = GlobalLogger.msg
+-		GlobalLogger.debug = GlobalLogger.msg
+-
+-#~~~~ generic error handling ~~~~~~~
+-def formatExceptionInfo(maxTBlevel=5):
+-	cla, exc, trbk = sys.exc_info()
+-	excName = cla.__name__
+-	try:
+-		excArgs = ' '.join(exc.__dict__["args"])
+-	except KeyError:
+-		excArgs = "<no args>"
+-		excTb = ' '.join(traceback.format_tb(trbk, maxTBlevel))
+-		return excName + ":" + excArgs + ":" + excTb
+-
+-#~~~~ now() in UTC 0 ~~~~~~~
+-def rightNowInUTC(serverTimeZone):
+-	rightnow = datetime.datetime.now()
+-	rightnow = pytz.timezone(serverTimeZone).localize(rightnow)
+-	rightnow = rightnow.astimezone(pytz.timezone('UTC'))
+-	return rightnow
+-
+-# vim:ts=4:noet:
+diff --git a/setup.py b/setup.py
+index 8fe9f2c..10f6480 100644
+--- a/setup.py
++++ b/setup.py
+@@ -3,7 +3,7 @@ from distutils.core import setup
+ setup(
+   name               = 'cometd-twisted',
+   version            = '0.1',
+-  py_modules         = ['cometd'],
++  packages           = ['cometd'],
+   scripts            = ['twisted-cometd-client.py'],
+   data_files         = [ ('/etc/cometd', ['cometd.tac']) ],
+   author             = 'Alex Russell',
+-- 

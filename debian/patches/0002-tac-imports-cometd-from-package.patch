@@ -1,0 +1,22 @@
+From: paul cannon <paul@riptano.com>
+Date: Wed, 1 Dec 2010 12:23:20 -0600
+Subject: [PATCH] tac imports cometd from package
+
+---
+ cometd.tac |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/cometd.tac b/cometd.tac
+index 6cbebf4..a770a9a 100644
+--- a/cometd.tac
++++ b/cometd.tac
+@@ -53,7 +53,7 @@ from twisted.internet import reactor
+ from twisted.application import service, strports
+ import os.path
+ import sys; sys.path.append(".")
+-import cometd
++from cometd import cometd
+ 
+ 
+ clientTimeoutSec = clientTimeout * 60
+-- 
