@@ -5,3 +5,4 @@
 0005-fix-broken-python-syntax-in-unit-tests.patch
 0006-add-bayeux-source-from-cometd-toplevel-repo.patch
 0007-look-for-bayeux-json-in-fs-with-an-absolute-path.patch
+0008-fix-a-myriad-of-syntax-errors-in-bayeux.json.patch
