@@ -2,13 +2,13 @@ Source: cometd-twisted
 Section: python
 Priority: extra
 Maintainer: paul cannon <paul@riptano.com>
-Build-Depends: debhelper (>= 7.0.50~)
+Build-Depends: debhelper (>= 7.0.50~), python (>= 2.5)
 Standards-Version: 3.9.1.0
 Homepage: http://code.google.com/p/cometd/wiki/CometdTwisted
 
 Package: python-cometd-twisted
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, python-twisted-core, python-twisted-web
+Depends: ${misc:Depends}, ${python:Depends}, python-twisted-core, python-twisted-web, python-tz, python-cjson | python-simplejson | python (>= 2.6)
 Description: Twisted implementation of the cometd HTTP-based event routing bus
  Cometd is a scalable HTTP-based event routing bus that uses a push technology
  pattern known as Comet.
