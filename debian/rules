@@ -3,9 +3,15 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
+DESTDIR=debian/python-cometd-twisted
+
 %:
 	dh $@ 
 
 override_dh_clean:
 	dh_clean
 	rm -rf build
+
+override_dh_install:
+	dh_install
+	mv $(DESTDIR)/usr/bin/twisted-cometd-client.py $(DESTDIR)/usr/bin/twisted-cometd-client
